@@ -1,11 +1,13 @@
 package com.example.aamirror
 
 import android.accessibilityservice.AccessibilityService
+import android.content.Intent
 import android.graphics.Rect
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.util.SparseArray
+import android.view.Display
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
@@ -21,8 +23,18 @@ class MirrorAccessibilityService : AccessibilityService() {
 
     companion object {
         @Volatile private var instance: MirrorAccessibilityService? = null
+        @Volatile private var phoneBoundsSnapshot: Map<String, Rect> = emptyMap()
 
         fun isReady(): Boolean = instance != null
+
+        fun phoneWindowBounds(pkg: String): Rect? =
+            phoneBoundsSnapshot[pkg]?.let { Rect(it) }
+
+        fun startPhoneSplit(pkgA: String, pkgB: String) {
+            instance?.main?.post {
+                instance?.startPhoneSplitInternal(pkgA, pkgB)
+            }
+        }
 
         fun probeAfterCarTap(pkg: String, displayId: Int) {
             instance?.scheduleProbe(pkg, displayId)
@@ -63,7 +75,8 @@ class MirrorAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
-        MirrorEngine.onShellReady() // trigger launchPending cho Accessibility-only mode
+        snapshotPhoneWindows()
+        MirrorEngine.onShellReady()
     }
 
     override fun onDestroy() {
@@ -73,6 +86,7 @@ class MirrorAccessibilityService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         event ?: return
+        snapshotPhoneWindows()
         val pkg = event.packageName?.toString() ?: return
         if (!MirrorEngine.shouldOpenAutoKeyboard(pkg, event.displayId)) return
 
@@ -86,6 +100,62 @@ class MirrorAccessibilityService : AccessibilityService() {
                 requestKeyboard(pkg, event.displayId, node)
             }
         }
+    }
+
+    private fun snapshotPhoneWindows() {
+        val all: SparseArray<List<AccessibilityWindowInfo>> = windowsOnAllDisplays
+        val windows = all[Display.DEFAULT_DISPLAY] ?: emptyList()
+        val out = LinkedHashMap<String, Rect>()
+        for (w in windows) {
+            val root = w.root ?: continue
+            val pkg = root.packageName?.toString() ?: continue
+            val r = Rect()
+            root.getBoundsInScreen(r)
+            if (r.width() > 8 && r.height() > 8) out[pkg] = Rect(r)
+        }
+        phoneBoundsSnapshot = out
+    }
+
+    private fun launchPhoneApp(pkg: String, adjacent: Boolean) {
+        if (pkg.isBlank()) return
+        val base = packageManager.getLaunchIntentForPackage(pkg) ?: return
+        val i = Intent(base).addFlags(
+            Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+        )
+        if (adjacent) i.addFlags(Intent.FLAG_ACTIVITY_LAUNCH_ADJACENT)
+        try {
+            startActivity(i)
+        } catch (_: Throwable) {
+        }
+    }
+
+    private fun startPhoneSplitInternal(pkgA: String, pkgB: String) {
+        if (pkgA.isBlank()) return
+
+        launchPhoneApp(pkgA, adjacent = false)
+        main.postDelayed({
+            if (pkgB.isBlank()) {
+                snapshotPhoneWindows()
+                return@postDelayed
+            }
+
+            val splitAvailable = systemActions.any {
+                it.id == GLOBAL_ACTION_TOGGLE_SPLIT_SCREEN
+            }
+
+            if (splitAvailable) {
+                performGlobalAction(GLOBAL_ACTION_TOGGLE_SPLIT_SCREEN)
+            }
+
+            main.postDelayed({
+                // LAUNCH_ADJACENT là fallback và cũng giúp giữ B ở cửa sổ liền kề trên Android 12L+.
+                launchPhoneApp(pkgB, adjacent = true)
+                main.postDelayed({
+                    snapshotPhoneWindows()
+                    MirrorEngine.onPhoneCaptureChanged()
+                }, 900)
+            }, if (splitAvailable) 450L else 150L)
+        }, 650)
     }
 
     private fun windowsFor(displayId: Int): List<AccessibilityWindowInfo> {

@@ -4,6 +4,8 @@
     <uses-permission android:name="androidx.car.app.NAVIGATION_TEMPLATES" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <queries>
         <package android:name="moe.shizuku.privileged.api" />
         <intent><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent>
@@ -18,6 +20,11 @@
         </activity>
         <activity android:name=".PreviewActivity" android:exported="false"
             android:configChanges="orientation|screenSize|keyboardHidden|smallestScreenSize|screenLayout" />
+        <service
+            android:name=".PhoneCaptureService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection" />
+
         <service android:name=".car.MirrorCarService" android:exported="true">
             <intent-filter><action android:name="androidx.car.app.CarAppService" /><category android:name="androidx.car.app.category.NAVIGATION" /></intent-filter>
         </service>

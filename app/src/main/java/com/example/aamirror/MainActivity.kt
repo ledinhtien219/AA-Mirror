@@ -7,6 +7,8 @@ import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.media.projection.MediaProjectionConfig
+import android.media.projection.MediaProjectionManager
 import android.os.Bundle
 import android.provider.Settings
 import android.view.View
@@ -24,6 +26,7 @@ class MainActivity : Activity() {
     private var cfg = Config.load()
     private lateinit var status: TextView
     private lateinit var btnShizuku: Button
+    private lateinit var btnPhoneCapture: Button
     private lateinit var btnA: Button
     private lateinit var btnB: Button
     private lateinit var btnAutoKeyboard: Button
@@ -31,6 +34,10 @@ class MainActivity : Activity() {
     private val modeIds = LinkedHashMap<Int, Mode>()
     private val listener: () -> Unit = { runOnUiThread { refreshStatus() } }
     private var updateChecked = false
+
+    private companion object {
+        const val REQ_PHONE_CAPTURE = 4200
+    }
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
@@ -65,6 +72,22 @@ class MainActivity : Activity() {
         root.addView(status)
         btnShizuku = btn("Kết nối Shizuku") { onShizukuClick() }
         root.addView(btnShizuku)
+
+        root.addView(tv("0. Không Shizuku / không Wireless Debugging", 18f))
+        btnPhoneCapture = btn("") {
+            if (PhoneCaptureState.isActive()) {
+                PhoneCaptureService.stop(this)
+                btnPhoneCapture.text = "Đang dừng..."
+            } else {
+                startPhoneCaptureFlow()
+            }
+        }
+        root.addView(btnPhoneCapture)
+        root.addView(tv(
+            "Chế độ này dùng split-screen thật trên điện thoại + MediaProjection + Trợ năng. " +
+                "Lần bắt đầu Android sẽ hỏi quyền chia sẻ màn hình; hãy chọn toàn bộ màn hình. " +
+                "Không cần bật Wireless Debugging.", 13f
+        ))
 
         root.addView(tv("1. Chọn app", 18f))
         btnA = btn("") { pickApp(true) }
@@ -137,6 +160,7 @@ class MainActivity : Activity() {
 
         refreshButtons()
         refreshAutoKeyboard()
+        refreshPhoneCapture()
     }
 
     override fun onResume() {
@@ -145,6 +169,7 @@ class MainActivity : Activity() {
         ShizukuHelper.tryBind()
         refreshStatus()
         refreshAutoKeyboard()
+        refreshPhoneCapture()
         if (!updateChecked) {
             updateChecked = true
             UpdateChecker.checkInApp(this, force = false)
@@ -183,6 +208,51 @@ class MainActivity : Activity() {
         return enabled.split(':')
             .mapNotNull { ComponentName.unflattenFromString(it) }
             .any { it == target }
+    }
+
+    private fun refreshPhoneCapture() {
+        if (!::btnPhoneCapture.isInitialized) return
+        btnPhoneCapture.text = if (PhoneCaptureState.isActive())
+            "Phone Split Capture: ĐANG BẬT ✔ — bấm để dừng"
+        else
+            "Bắt đầu Phone Split Capture (không Shizuku)"
+    }
+
+    private fun startPhoneCaptureFlow() {
+        if (!autoKeyboardEnabled()) {
+            AlertDialog.Builder(this)
+                .setTitle("Cần bật Trợ năng AA Mirror")
+                .setMessage(
+                    "Chế độ không Shizuku cần Trợ năng để tạo split-screen và điều khiển hai app."
+                )
+                .setNegativeButton("Huỷ", null)
+                .setPositiveButton("Mở Trợ năng") { _, _ ->
+                    startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                }
+                .show()
+            return
+        }
+
+        val pm = getSystemService(MediaProjectionManager::class.java)
+        val captureIntent = if (Build.VERSION.SDK_INT >= 34) {
+            pm.createScreenCaptureIntent(MediaProjectionConfig.createConfigForDefaultDisplay())
+        } else {
+            pm.createScreenCaptureIntent()
+        }
+        @Suppress("DEPRECATION")
+        startActivityForResult(captureIntent, REQ_PHONE_CAPTURE)
+    }
+
+    @Deprecated("Legacy result API is sufficient for MediaProjection token handoff")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQ_PHONE_CAPTURE || resultCode != RESULT_OK || data == null) return
+
+        val i = Intent(this, PhoneCaptureService::class.java)
+            .putExtra(PhoneCaptureService.EXTRA_RESULT_CODE, resultCode)
+            .putExtra(PhoneCaptureService.EXTRA_RESULT_DATA, data)
+        startForegroundService(i)
+        btnPhoneCapture.text = "Đang khởi động Phone Split Capture..."
     }
 
     private fun refreshAutoKeyboard() {
@@ -241,6 +311,9 @@ class MainActivity : Activity() {
                 val pkg = if (which == 0) "" else apps[which - 1].first
                 cfg = if (isA) cfg.copy(pkgA = pkg) else cfg.copy(pkgB = pkg)
                 commit()
+                if (PhoneCaptureState.isActive()) {
+                    MirrorAccessibilityService.startPhoneSplit(cfg.pkgA, cfg.pkgB)
+                }
             }
             .show()
     }

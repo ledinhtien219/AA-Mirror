@@ -122,6 +122,22 @@ object MirrorEngine {
         drawFrame()
     }
 
+    private fun phoneCaptureMode(): Boolean =
+        PhoneCaptureState.isActive() && ShizukuHelper.shell == null
+
+    private fun effectiveDisplayId(p: Pane): Int =
+        if (phoneCaptureMode()) android.view.Display.DEFAULT_DISPLAY else p.displayId
+
+    fun onPhoneCaptureChanged() {
+        handler.post { rebuild() }
+    }
+
+    fun onPhoneCaptureFrame() {
+        handler.post {
+            if (phoneCaptureMode()) requestFrame()
+        }
+    }
+
     // ---------------------------------------------------------------- vòng đời
 
     fun attach(s: Surface, w: Int, h: Int, showToolbar: Boolean = false) {
@@ -241,6 +257,27 @@ object MirrorEngine {
         var pkgs = listOf(cfg.pkgA, cfg.pkgB).filter { it.isNotEmpty() }.distinct()
         if (cfg.mode == Mode.SINGLE) pkgs = pkgs.take(1)
 
+        // Chế độ không Shizuku: không tạo VirtualDisplay cho từng app nữa.
+        // Hai app chạy split-screen thật trên display 0, còn MediaProjection cung cấp hình.
+        if (phoneCaptureMode()) {
+            if (panes.values.any { it.vd != null }) releaseAll()
+            panes.keys.filter { it !in pkgs }.forEach { panes.remove(it)?.release() }
+            val rects = computeRects(pkgs.size, cfg.mode)
+            pkgs.forEachIndexed { i, pkg ->
+                val p = panes[pkg] ?: Pane(pkg).also { panes[pkg] = it }
+                p.rect = Rect(rects[i])
+                p.dpi = cfg.dpi
+                p.launched = MirrorAccessibilityService.phoneWindowBounds(pkg) != null
+            }
+            if (focus == null || !panes.containsKey(focus)) focus = panes.values.firstOrNull()?.pkg
+            displaySnapshot = pkgs.associateWith { android.view.Display.DEFAULT_DISPLAY }
+            drawFrame()
+            return
+        }
+
+        // Nếu vừa thoát Phone Capture, bỏ logical panes để dựng lại VirtualDisplay thật.
+        if (panes.isNotEmpty() && panes.values.any { it.vd == null }) releaseAll()
+
         panes.keys.filter { it !in pkgs }.forEach { panes.remove(it)?.release() }
 
         val rects = computeRects(pkgs.size, cfg.mode)
@@ -349,6 +386,7 @@ object MirrorEngine {
     }
 
     private fun launchPending() {
+        if (phoneCaptureMode()) return
         val shell = ShizukuHelper.shell
         for (p in panes.values) {
             if (!p.launched && p.displayId >= 0) launch(p, shell)
@@ -433,16 +471,73 @@ object MirrorEngine {
         if (c == null) return
         try {
             c.drawColor(Color.BLACK)
-            for (p in panes.values) {
-                val b = p.bitmap ?: continue
-                val bb = if (hw) b else b.copy(Bitmap.Config.ARGB_8888, false)
-                if (bb != null) c.drawBitmap(bb, null, p.rect, bitmapPaint)
+            var hasFrame = false
+            if (phoneCaptureMode()) {
+                hasFrame = drawPhoneCapture(c, hw)
+            } else {
+                for (p in panes.values) {
+                    val b = p.bitmap ?: continue
+                    val bb = if (hw) b else b.copy(Bitmap.Config.ARGB_8888, false)
+                    if (bb != null) {
+                        c.drawBitmap(bb, null, p.rect, bitmapPaint)
+                        hasFrame = true
+                        if (!hw && bb !== b) bb.recycle()
+                    }
+                }
             }
-            if (panes.values.none { it.bitmap != null }) drawStatus(c)
+            if (!hasFrame) drawStatus(c)
             if (showToolbarOnSurface) drawToolbar(c)
         } finally {
             try { s.unlockCanvasAndPost(c) } catch (_: Throwable) {}
         }
+    }
+
+    private fun phoneSourceRect(pkg: String, index: Int, count: Int, w: Int, h: Int): Rect {
+        val fromA11y = MirrorAccessibilityService.phoneWindowBounds(pkg)
+        if (fromA11y != null) {
+            val r = Rect(fromA11y)
+            if (r.intersect(0, 0, w, h) && r.width() > 8 && r.height() > 8) return r
+        }
+
+        // Fallback khi Accessibility chưa kịp phát event split-screen.
+        if (count <= 1) return Rect(0, 0, w, h)
+        return if (h >= w) {
+            val mid = h / 2
+            if (index == 0) Rect(0, 0, w, mid) else Rect(0, mid, w, h)
+        } else {
+            val mid = w / 2
+            if (index == 0) Rect(0, 0, mid, h) else Rect(mid, 0, w, h)
+        }
+    }
+
+    private fun drawPhoneCapture(c: android.graphics.Canvas, hw: Boolean): Boolean {
+        var drawn = false
+        PhoneCaptureState.withBitmap { bitmap, w, h ->
+            val count = panes.size
+            panes.values.forEachIndexed { index, p ->
+                val src = phoneSourceRect(p.pkg, index, count, w, h)
+                val bb = if (hw) bitmap else bitmap.copy(Bitmap.Config.ARGB_8888, false)
+                if (bb != null) {
+                    c.drawBitmap(bb, src, p.rect, bitmapPaint)
+                    drawn = true
+                    if (!hw && bb !== bitmap) bb.recycle()
+                }
+                p.launched = MirrorAccessibilityService.phoneWindowBounds(p.pkg) != null
+            }
+        }
+        return drawn
+    }
+
+    private fun mapToPhone(p: Pane, x: Float, y: Float): Pair<Float, Float>? {
+        if (!phoneCaptureMode()) return x to y
+        val w = PhoneCaptureState.width()
+        val h = PhoneCaptureState.height()
+        if (w <= 0 || h <= 0 || p.rect.width() <= 0 || p.rect.height() <= 0) return null
+        val index = panes.values.indexOf(p).coerceAtLeast(0)
+        val src = phoneSourceRect(p.pkg, index, panes.size, w, h)
+        val fx = (x / p.rect.width().toFloat()).coerceIn(0f, 1f)
+        val fy = (y / p.rect.height().toFloat()).coerceIn(0f, 1f)
+        return (src.left + fx * src.width()) to (src.top + fy * src.height())
     }
 
     private fun toolbarButtons(): List<ToolButton> {
@@ -521,11 +616,11 @@ object MirrorEngine {
             Tool.BACK -> backInternal()
             Tool.KEYBOARD -> {
                 val p = focusPane()
-                if (p != null && p.displayId >= 0) {
+                if (p != null && effectiveDisplayId(p) >= 0) {
                     KeyboardBridge.request(
                         KeyboardBridge.Request(
                             pkg = p.pkg,
-                            displayId = p.displayId,
+                            displayId = effectiveDisplayId(p),
                             initialText = "",
                             replaceExisting = false,
                             force = true
@@ -551,13 +646,15 @@ object MirrorEngine {
         lines.add(
             when {
                 ShizukuHelper.shell != null -> "Điều khiển: Shizuku (đầy đủ)"
-                MirrorAccessibilityService.isReady() -> "Điều khiển: Trợ năng (cơ bản, không raw touch)"
+                phoneCaptureMode() && MirrorAccessibilityService.isReady() ->
+                    "Điều khiển: Phone Split + MediaProjection + Trợ năng"
+                MirrorAccessibilityService.isReady() -> "Điều khiển: Trợ năng (chưa bật Phone Split Capture)"
                 else -> "Điều khiển: CHƯA SẴN SÀNG — bật Trợ năng hoặc Shizuku"
             }
         )
         for (p in panes.values) {
             lines.add(
-                "${p.pkg}: display ${p.displayId}, " +
+                "${p.pkg}: display ${effectiveDisplayId(p)}, " +
                     (if (p.launched) "đã mở" else "chưa mở") + ", " +
                     (if (p.bitmap != null) "có hình" else "chưa có hình")
             )
@@ -651,12 +748,14 @@ object MirrorEngine {
                     probeImeEditorAfterTap(h.pane)
                 }, 50)
             } else {
-                // Accessibility mode: click đúng node chứa tọa độ thay vì inject raw MotionEvent.
+                // Phone Capture: tọa độ trên xe phải map ngược vào bounds split-screen của điện thoại.
+                val mapped = mapToPhone(h.pane, h.x, h.y) ?: (h.x to h.y)
+                val id = effectiveDisplayId(h.pane)
                 MirrorAccessibilityService.clickAt(
-                    h.pane.pkg, h.pane.displayId, h.x, h.y
+                    h.pane.pkg, id, mapped.first, mapped.second
                 )
                 handler.postDelayed({
-                    MirrorAccessibilityService.probeAfterCarTap(h.pane.pkg, h.pane.displayId)
+                    MirrorAccessibilityService.probeAfterCarTap(h.pane.pkg, id)
                 }, 120)
             }
         }
@@ -765,8 +864,10 @@ object MirrorEngine {
             inject(d.pane, MotionEvent.ACTION_UP, d.x, d.y, d.downTime, now)
         } else {
             val (ax, ay) = anchorFor(d.pane)
+            val mapped = mapToPhone(d.pane, ax, ay) ?: (ax to ay)
             MirrorAccessibilityService.scrollAt(
-                d.pane.pkg, d.pane.displayId, ax, ay, a11yScrollDx, a11yScrollDy
+                d.pane.pkg, effectiveDisplayId(d.pane),
+                mapped.first, mapped.second, a11yScrollDx, a11yScrollDy
             )
         }
         a11yScrollDx = 0f
@@ -817,7 +918,7 @@ object MirrorEngine {
         handler.post {
             val p = if (targetPkg != null) panes[targetPkg] else focusPane()
             p ?: return@post
-            val id = p.displayId
+            val id = effectiveDisplayId(p)
             if (id < 0 || text.isEmpty() && !enter) return@post
             val shell = ShizukuHelper.shell
             if (shell == null) {
@@ -860,7 +961,7 @@ object MirrorEngine {
         if (shell != null) {
             try { shell.injectKey(p.displayId, KeyEvent.KEYCODE_BACK) } catch (_: RemoteException) {}
         } else {
-            MirrorAccessibilityService.back(p.pkg, p.displayId)
+            MirrorAccessibilityService.back(p.pkg, effectiveDisplayId(p))
         }
     }
 

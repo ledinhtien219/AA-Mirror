@@ -1,4 +1,4 @@
-# AA Mirror v0.3.9 — Hybrid Accessibility
+# AA Mirror v0.4.0 — Phone Split Capture
 
 Chạy app điện thoại trên màn hình Android Auto, chia tỉ lệ 30-70 / 50-50 / 70-30, chạm được.
 Android 12 trở lên (minSdk 31). Cần **Shizuku**.
@@ -76,6 +76,14 @@ Android Auto thường ẩn app cài ngoài Store. Cài APK bằng KingInstaller
 - **v0.3.8 là mốc signing mới**: từ v0.3.7 hoặc cũ hơn có thể phải gỡ bản cũ đúng một lần.
 - Mỗi push main tự tạo GitHub Release kèm APK.
 - App kiểm tra GitHub Releases khi mở và WorkManager kiểm tra mỗi 24 giờ; có bản mới sẽ hiện dialog/notification (Android 13+ cần quyền thông báo).
+
+## Phone Split Capture (0.4.0)
+- Chế độ thử nghiệm **không cần Shizuku và không cần Wireless Debugging**.
+- Người dùng cấp quyền MediaProjection cho mỗi phiên capture; Android 14+ yêu cầu consent mới cho mỗi phiên.
+- Hai app chạy split-screen thật trên display 0. AA Mirror capture toàn màn hình điện thoại rồi crop riêng bounds của App A/B và ghép lại theo tỉ lệ 30/70, 50/50 hoặc 70/30 trên Android Auto.
+- Accessibility theo dõi bounds hai cửa sổ trên display 0; tap/scroll từ xe được map ngược về tọa độ thật trên điện thoại.
+- AA Mirror thử GLOBAL_ACTION_TOGGLE_SPLIT_SCREEN nếu ROM cung cấp action; sau đó mở App B bằng FLAG_ACTIVITY_LAUNCH_ADJACENT. Nếu ROM chặn tự động split-screen, người dùng có thể phải kích hoạt split-screen thủ công một lần.
+- Chế độ Shizuku/VirtualDisplay vẫn được giữ làm Full Control cho Maps drag, slider và custom gesture.
 
 ## Hybrid Accessibility (0.3.9)
 - Nếu Shizuku sẵn sàng: giữ raw input đầy đủ như trước.

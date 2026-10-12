@@ -145,6 +145,12 @@ class AppSearchScreen(carContext: CarContext, private val isA: Boolean) : Screen
         val c = Config.load()
         Config.save(if (isA) c.copy(pkgA = pkg) else c.copy(pkgB = pkg))
         MirrorEngine.reconfigure()
+        if (com.example.aamirror.PhoneCaptureState.isActive()) {
+            val updated = Config.load()
+            com.example.aamirror.MirrorAccessibilityService.startPhoneSplit(
+                updated.pkgA, updated.pkgB
+            )
+        }
         screenManager.popToRoot()
     }
     override fun onGetTemplate(): Template {
