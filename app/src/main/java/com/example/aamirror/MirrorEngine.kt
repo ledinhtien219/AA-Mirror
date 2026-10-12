@@ -9,7 +9,6 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.graphics.Rect
-import android.graphics.RectF
 import android.hardware.HardwareBuffer
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
@@ -33,7 +32,7 @@ import java.util.concurrent.TimeUnit
  */
 object MirrorEngine {
     private const val TAG = "AAMirror"
-    private const val GAP = 8
+    private const val GAP = 0
     private const val SCROLL_END_DELAY_MS = 160L
     private const val ANCHOR_TTL_MS = 6000L
 
@@ -95,16 +94,6 @@ object MirrorEngine {
     private var rawHit: Hit? = null
 
     private val bitmapPaint = Paint(Paint.FILTER_BITMAP_FLAG)
-    private val paneBorderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(120, 255, 255, 255)
-        style = Paint.Style.STROKE
-        strokeWidth = 2f
-    }
-    private val focusBorderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.CYAN
-        style = Paint.Style.STROKE
-        strokeWidth = 5f
-    }
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; textSize = 36f }
 
     // ---------------------------------------------------------------- vòng đời
@@ -212,11 +201,11 @@ object MirrorEngine {
     }
 
     private fun usableArea(): Rect {
-        val full = Rect(0, 0, sw, sh)
-        val v = area ?: return full
-        val r = Rect(v)
-        if (!r.intersect(full) || r.width() < 200 || r.height() < 100) return full
-        return r
+        // Vẽ edge-to-edge trên toàn bộ Surface của Android Auto.
+        // stableArea chỉ là vùng host khuyến nghị để tránh các nút overlay; nếu dùng nó để
+        // tính kích thước VirtualDisplay sẽ tạo viền đen lớn quanh hai app như v0.3.0.
+        // Các nút Android Auto có thể phủ lên nội dung, giống ứng dụng navigation thật.
+        return Rect(0, 0, sw, sh)
     }
 
     private fun computeRects(count: Int, mode: Mode): List<Rect> {
@@ -365,25 +354,10 @@ object MirrorEngine {
                 val bb = if (hw) b else b.copy(Bitmap.Config.ARGB_8888, false)
                 if (bb != null) c.drawBitmap(bb, null, p.rect, bitmapPaint)
             }
-            drawPaneChrome(c)
             if (panes.values.none { it.bitmap != null }) drawStatus(c)
         } finally {
             try { s.unlockCanvasAndPost(c) } catch (_: Throwable) {}
         }
-    }
-
-    /** Viền mảnh cho từng app + viền nổi bật pane đang nhận Back/keyboard/swipe. */
-    private fun drawPaneChrome(c: android.graphics.Canvas) {
-        if (panes.size <= 1) return
-        for (p in panes.values) {
-            val r = RectF(p.rect)
-            r.inset(1.5f, 1.5f)
-            c.drawRect(r, paneBorderPaint)
-        }
-        val active = focus?.let { panes[it] } ?: return
-        val r = RectF(active.rect)
-        r.inset(3f, 3f)
-        c.drawRect(r, focusBorderPaint)
     }
 
     /** Khi chưa có hình, hiện trạng thái ngay trên màn hình xe để biết đang kẹt ở đâu. */
@@ -425,9 +399,9 @@ object MirrorEngine {
     }
 
     private fun setFocus(p: Pane) {
-        val changed = focus != p.pkg
+        // Focus vẫn được giữ nội bộ để route swipe/Back/keyboard đúng pane,
+        // nhưng không vẽ viền màu lên UI nữa.
         focus = p.pkg
-        if (changed) drawFrame()
     }
 
     private fun rememberTouch(p: Pane, x: Float, y: Float, at: Long = SystemClock.uptimeMillis()) {
@@ -484,6 +458,10 @@ object MirrorEngine {
             inject(h.pane, MotionEvent.ACTION_DOWN, h.x, h.y, t, t)
             handler.postDelayed({
                 inject(h.pane, MotionEvent.ACTION_UP, h.x, h.y, t, SystemClock.uptimeMillis())
+                // Không phụ thuộc hoàn toàn vào TYPE_VIEW_FOCUSED: sau mỗi tap, Accessibility
+                // chủ động dò focused editable trên đúng VirtualDisplay. Điều này cần cho
+                // YouTube/Compose/WebView, nơi event.source thường chỉ là container.
+                MirrorAccessibilityService.probeAfterCarTap(h.pane.pkg, h.pane.displayId)
             }, 50)
         }
     }

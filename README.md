@@ -1,4 +1,4 @@
-# AA Mirror v0.3.0 — Touch Split + Auto Keyboard
+# AA Mirror v0.3.1 — Full Surface + Auto Keyboard Fix
 
 Chạy app điện thoại trên màn hình Android Auto, chia tỉ lệ 30-70 / 50-50 / 70-30, chạm được.
 Android 12 trở lên (minSdk 31). Cần **Shizuku**.
@@ -31,6 +31,11 @@ Android Auto thường ẩn app cài ngoài Store. Cài APK bằng KingInstaller
 - `ShellService` (quyền shell qua Shizuku): `am start --display N` để mở app lên display, `IInputManager.injectInputEvent` + `setDisplayId` để bơm cảm ứng/phím (dự phòng: `input -d N`).
 - `car/MirrorCar.kt`: CarAppService + NavigationTemplate, nhận Surface và sự kiện chạm.
 
+## Full surface (0.3.1)
+- Hai app dùng toàn bộ `SurfaceContainer` thay vì `stableArea`, nên không còn khoảng đen lớn quanh nội dung. Các nút Android Auto được vẽ overlay phía trên như app navigation.
+- Bỏ toàn bộ viền trắng/xanh của pane; focus A/B vẫn tồn tại nội bộ để route swipe/Back/keyboard.
+- Khoảng cách giữa hai pane = 0 px.
+
 ## Cảm ứng A/B (0.2)
 - **Tap** trên Android Auto có tọa độ nên được route thẳng vào đúng app A hoặc B.
 - **Swipe/scroll** của Android Auto projected chỉ gửi `distanceX/distanceY`, không gửi tọa độ `ACTION_DOWN`. Vì vậy app dùng mô hình **active pane**: chạm pane nào thì pane đó có viền xanh và nhận Back / bàn phím / swipe tiếp theo.
@@ -38,9 +43,10 @@ Android Auto thường ẩn app cài ngoài Store. Cài APK bằng KingInstaller
 - Mỗi pane có điểm chạm cuối riêng, nên A/B không dùng lẫn tọa độ anchor của nhau.
 - Preview trên điện thoại có raw `DOWN/MOVE/UP`, nên kéo trực tiếp ở pane nào là pane đó nhận gesture, kể cả kéo qua đường chia.
 
-## Bàn phím tự động (0.3)
+## Bàn phím tự động (0.3.1)
 - Android không cho IME/Gboard của điện thoại vẽ trực tiếp lên **VirtualDisplay do app tạo** vì giới hạn bảo mật. Vì vậy AA Mirror dùng **SearchTemplate của Android Auto** để hiện bàn phím native của head unit.
-- Khi người dùng tap vào một `EditText`/ô tìm kiếm trong app đang mirror, `MirrorAccessibilityService` nhận event `VIEW_FOCUSED/VIEW_CLICKED`.
+- Khi người dùng tap vào một `EditText`/ô tìm kiếm trong app đang mirror, `MirrorAccessibilityService` vừa nghe Accessibility event vừa **chủ động probe input focus sau ACTION_UP**.
+- Probe dùng `getWindowsOnAllDisplays()` thay vì `getWindows()`, nên tìm được ô nhập nằm trên VirtualDisplay của YouTube/Maps/Compose/WebView.
 - Event chỉ được chấp nhận nếu đúng package/display và có tap từ Android Auto trong ~2.5 giây trước đó, tránh bật nhầm từ màn hình điện thoại.
 - `KeyboardBridge` yêu cầu `MirrorScreen` push `InputScreen`; keyboard Android Auto hiện ngay.
 - Khi SearchTemplate làm Android Auto thu hồi Surface tạm thời, engine **giữ VirtualDisplay sống**; sau khi Submit/Back, Surface được attach lại nên app không bị restart.
