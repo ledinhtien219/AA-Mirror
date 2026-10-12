@@ -1,9 +1,7 @@
 package com.example.aamirror
 
-import android.app.ActivityOptions
 import android.content.ClipData
 import android.content.ClipboardManager
-import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.Paint
@@ -36,6 +34,8 @@ object MirrorEngine {
     private const val GAP = 0
     private const val SCROLL_END_DELAY_MS = 160L
     private const val ANCHOR_TTL_MS = 6000L
+    // Coalesce hai VirtualDisplay về ~30 fps tổng để giảm GPU/CPU và nhiệt.
+    private const val FRAME_INTERVAL_MS = 33L
 
     // Cờ VirtualDisplay (một số là @hide nên khai báo số trực tiếp)
     private const val F_PUBLIC = 1
@@ -83,6 +83,9 @@ object MirrorEngine {
     private var sw = 0
     private var sh = 0
     private var showToolbarOnSurface = false
+    private var panesPaused = false
+    private var frameScheduled = false
+    private var lastFrameAt = 0L
     private val panes = LinkedHashMap<String, Pane>()
     private var area: Rect? = null   // vùng nhìn thấy được (không bị thanh nút/launcher của xe che)
 
@@ -109,6 +112,12 @@ object MirrorEngine {
         style = Paint.Style.FILL
     }
 
+    private val renderFrame = Runnable {
+        frameScheduled = false
+        lastFrameAt = SystemClock.uptimeMillis()
+        drawFrame()
+    }
+
     // ---------------------------------------------------------------- vòng đời
 
     fun attach(s: Surface, w: Int, h: Int, showToolbar: Boolean = false) {
@@ -117,26 +126,26 @@ object MirrorEngine {
             sw = w
             sh = h
             showToolbarOnSurface = showToolbar
+            resumePanes()
             rebuild()
         }
     }
 
-    /** Gọi khi Surface bị huỷ và không cần giữ session (preview/thoát hẳn). */
-    fun detach(s: Surface?) = detachInternal(s, keepPanes = false)
-
     /**
-     * Android Auto có thể thu hồi Surface tạm thời khi push SearchTemplate để hiện keyboard.
-     * Trường hợp đó phải giữ VirtualDisplay/app sống, nếu không Submit xong sẽ không còn đích để gõ.
+     * Không release VirtualDisplay khi host Surface biến mất. Nếu release display trong lúc task
+     * còn sống, Android có thể chuyển task về display 0 rồi lần sau AA Mirror lại tạo thêm bản mới.
+     * Giữ displayId/task và chỉ tháo render surface để giảm tải máy.
      */
-    fun detachKeepingPanes(s: Surface?) = detachInternal(s, keepPanes = true)
+    fun detach(s: Surface?) = detachInternal(s)
+    fun detachKeepingPanes(s: Surface?) = detachInternal(s)
 
-    private fun detachInternal(s: Surface?, keepPanes: Boolean) {
+    private fun detachInternal(s: Surface?) {
         val latch = CountDownLatch(1)
         handler.post {
             try {
                 if (s == null || surface === s) {
-                    if (!keepPanes) releaseAll()
                     surface = null
+                    pausePanes()
                 }
             } finally {
                 latch.countDown()
@@ -145,13 +154,16 @@ object MirrorEngine {
         latch.await(1500, TimeUnit.MILLISECONDS)
     }
 
-    /** Kết thúc hẳn Car session và giải phóng VirtualDisplay. */
+    /**
+     * Car session destroy chỉ pause renderer. VirtualDisplay/task được giữ để reconnect không
+     * nhân bản app và không migrate activity về màn hình điện thoại.
+     */
     fun shutdown() {
         val latch = CountDownLatch(1)
         handler.post {
             try {
-                releaseAll()
                 surface = null
+                pausePanes()
             } finally {
                 latch.countDown()
             }
@@ -166,12 +178,45 @@ object MirrorEngine {
         handler.post { area = copy; rebuild() }
     }
 
-    fun refresh() { handler.post { releaseAll(); rebuild() } }
+    fun refresh() {
+        handler.post {
+            // Soft refresh: reuse đúng VirtualDisplay/task hiện tại.
+            panes.values.forEach { it.launched = false }
+            launchPending()
+            drawFrame()
+        }
+    }
 
     fun onShellReady() { handler.post { launchPending() } }
 
+    private fun pausePanes() {
+        if (panesPaused) return
+        handler.removeCallbacks(renderFrame)
+        frameScheduled = false
+        for (p in panes.values) {
+            try { p.vd?.surface = null } catch (_: Throwable) {}
+            try { p.image?.close() } catch (_: Throwable) {}
+            p.image = null
+            p.bitmap = null
+        }
+        panesPaused = true
+    }
+
+    private fun resumePanes() {
+        if (!panesPaused) return
+        for (p in panes.values) {
+            val r = p.reader ?: continue
+            try { p.vd?.surface = r.surface } catch (t: Throwable) {
+                Log.w(TAG, "resume VirtualDisplay " + p.pkg + " thất bại", t)
+            }
+        }
+        panesPaused = false
+    }
+
     private fun releaseAll() {
         handler.removeCallbacks(endDrag)
+        handler.removeCallbacks(renderFrame)
+        frameScheduled = false
         drag = null
         rawHit = null
         focus = null
@@ -185,7 +230,7 @@ object MirrorEngine {
     private fun rebuild() {
         val s = surface
         if (s == null || !s.isValid || sw <= 0 || sh <= 0) {
-            releaseAll()
+            pausePanes()
             return
         }
         val cfg = Config.load()
@@ -244,7 +289,7 @@ object MirrorEngine {
 
     private fun newReader(p: Pane, w: Int, h: Int): ImageReader {
         val r = ImageReader.newInstance(
-            w, h, PixelFormat.RGBA_8888, 3, HardwareBuffer.USAGE_GPU_SAMPLED_IMAGE
+            w, h, PixelFormat.RGBA_8888, 2, HardwareBuffer.USAGE_GPU_SAMPLED_IMAGE
         )
         r.setOnImageAvailableListener({ reader -> onImage(p, reader) }, handler)
         return r
@@ -307,26 +352,20 @@ object MirrorEngine {
     }
 
     private fun launch(p: Pane, shell: IShellService?) {
+        // Shizuku là yêu cầu bắt buộc. Không fallback Context.startActivity(): trên một số ROM
+        // launchDisplayId bị bỏ qua và app bị mở nhầm thêm một bản trên display 0.
+        shell ?: return
         val ctx = App.instance
         val intent = ctx.packageManager.getLaunchIntentForPackage(p.pkg) ?: return
         val comp = intent.component?.flattenToShortString() ?: return
-        var ok = false
-        if (shell != null) {
-            ok = try {
-                shell.exec("am start --display ${p.displayId} -f 0x18000000 -n '$comp'") == 0
-            } catch (_: RemoteException) { false }
+
+        // Không dùng MULTIPLE_TASK. NEW_TASK|REORDER_TO_FRONT ưu tiên reuse task/activity hiện có.
+        val ok = try {
+            shell.exec("am start --display ${p.displayId} -f 0x10020000 -n '$comp'") == 0
+        } catch (_: RemoteException) {
+            false
         }
-        if (!ok) {
-            ok = try {
-                val opts = ActivityOptions.makeBasic().setLaunchDisplayId(p.displayId)
-                val i = Intent(intent).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_MULTIPLE_TASK)
-                ctx.startActivity(i, opts.toBundle())
-                true
-            } catch (t: Throwable) {
-                Log.w(TAG, "launch ${p.pkg} thất bại", t)
-                false
-            }
-        }
+        if (!ok) Log.w(TAG, "launch " + p.pkg + " trên display " + p.displayId + " thất bại")
         p.launched = ok
     }
 
@@ -341,11 +380,20 @@ object MirrorEngine {
         val old = p.image
         p.image = img
         p.bitmap = bmp
-        drawFrame()
+        requestFrame()
         try { old?.close() } catch (_: Throwable) {}
     }
 
+    private fun requestFrame() {
+        if (frameScheduled || surface == null || panesPaused) return
+        val now = SystemClock.uptimeMillis()
+        val delay = (FRAME_INTERVAL_MS - (now - lastFrameAt)).coerceAtLeast(0L)
+        frameScheduled = true
+        handler.postDelayed(renderFrame, delay)
+    }
+
     private fun drawFrame() {
+        lastFrameAt = SystemClock.uptimeMillis()
         val s = surface ?: return
         if (!s.isValid) return
         var hw = true
@@ -464,8 +512,8 @@ object MirrorEngine {
                 }
             }
             Tool.REFRESH -> {
-                releaseAll()
-                rebuild()
+                panes.values.forEach { it.launched = false }
+                launchPending()
             }
         }
         drawFrame()

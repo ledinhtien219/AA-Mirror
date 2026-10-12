@@ -1,4 +1,4 @@
-# AA Mirror v0.3.5 — Center Top Toolbar
+# AA Mirror v0.3.6 — Reuse Task + Thermal Fix
 
 Chạy app điện thoại trên màn hình Android Auto, chia tỉ lệ 30-70 / 50-50 / 70-30, chạm được.
 Android 12 trở lên (minSdk 31). Cần **Shizuku**.
@@ -31,7 +31,7 @@ Android Auto thường ẩn app cài ngoài Store. Cài APK bằng KingInstaller
 - `ShellService` (quyền shell qua Shizuku): `am start --display N` để mở app lên display, `IInputManager.injectInputEvent` + `setDisplayId` để bơm cảm ứng/phím (dự phòng: `input -d N`).
 - `car/MirrorCar.kt`: CarAppService + NavigationTemplate, nhận Surface và sự kiện chạm.
 
-## Toolbar giữa phía trên (0.3.5)
+## Toolbar giữa phía trên
 - Hai app dùng toàn bộ `SurfaceContainer` thay vì `stableArea`, nên không còn khoảng đen lớn quanh nội dung. Các nút Android Auto được vẽ overlay phía trên như app navigation.
 - Bỏ toàn bộ viền trắng/xanh của pane; focus A/B vẫn tồn tại nội bộ để route swipe/Back/keyboard.
 - Khoảng cách giữa hai pane = 0 px.
@@ -43,7 +43,7 @@ Android Auto thường ẩn app cài ngoài Store. Cài APK bằng KingInstaller
 - Mỗi pane có điểm chạm cuối riêng, nên A/B không dùng lẫn tọa độ anchor của nhau.
 - Preview trên điện thoại có raw `DOWN/MOVE/UP`, nên kéo trực tiếp ở pane nào là pane đó nhận gesture, kể cả kéo qua đường chia.
 
-## Bàn phím tự động (0.3.5)
+## Bàn phím tự động
 - Android không cho IME/Gboard của điện thoại vẽ trực tiếp lên **VirtualDisplay do app tạo** vì giới hạn bảo mật. Vì vậy AA Mirror dùng **SearchTemplate của Android Auto** để hiện bàn phím native của head unit.
 - Khi người dùng tap vào một `EditText`/ô tìm kiếm trong app đang mirror, `MirrorAccessibilityService` vừa nghe Accessibility event vừa **chủ động probe input focus sau ACTION_UP**.
 - Probe dùng `getWindowsOnAllDisplays()` thay vì `getWindows()`.
@@ -53,6 +53,14 @@ Android Auto thường ẩn app cài ngoài Store. Cài APK bằng KingInstaller
 - Khi SearchTemplate làm Android Auto thu hồi Surface tạm thời, engine **giữ VirtualDisplay sống**; sau khi Submit/Back, Surface được attach lại nên app không bị restart.
 - Nếu ô đã có chữ, nội dung hiện tại được đưa vào SearchTemplate; khi Enter, engine dùng `Ctrl+A -> Delete -> input text/paste -> Enter` trên **đúng display**.
 - Ô password bị bỏ qua. Nếu app dùng custom view không phát Accessibility event, dùng nút keyboard thủ công trên thanh Android Auto.
+
+## Chống nhân bản app / giảm nóng máy (0.3.6)
+- Bỏ `FLAG_ACTIVITY_MULTIPLE_TASK`; launcher dùng `NEW_TASK | REORDER_TO_FRONT` để ưu tiên reuse activity/task trên VirtualDisplay.
+- Không fallback `Context.startActivity()` khi Shizuku launch thất bại, tránh ROM mở nhầm app trên display 0 của điện thoại.
+- Khi Surface/session Android Auto bị hủy, engine **không release VirtualDisplay**. Nó chỉ `setSurface(null)`, giữ displayId/task nhưng dừng render.
+- Khi Android Auto kết nối lại, VirtualDisplay cũ được resume nên không cần tạo thêm bản app.
+- Nút Refresh là soft refresh, không phá display.
+- Hai nguồn frame được coalesce về tối đa khoảng **30 fps tổng**, giảm copy HardwareBuffer/GPU load và nhiệt.
 
 ## Giới hạn đã biết
 - Build CI được tự động kiểm tra trên GitHub Actions; vẫn cần test thực tế trên head unit/ROM cụ thể, nhất là Android 16/17.

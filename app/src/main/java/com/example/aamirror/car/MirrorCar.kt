@@ -90,6 +90,7 @@ class MirrorScreen(carContext: CarContext) : Screen(carContext) {
 
             override fun onDestroy(owner: LifecycleOwner) {
                 KeyboardBridge.clearListener(keyboardListener)
+                // Pause render nhưng giữ VirtualDisplay/task để reconnect không nhân bản app.
                 MirrorEngine.shutdown()
             }
         })
