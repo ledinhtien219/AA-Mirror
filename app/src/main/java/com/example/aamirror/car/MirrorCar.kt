@@ -11,18 +11,15 @@ import androidx.car.app.SurfaceCallback
 import androidx.car.app.SurfaceContainer
 import androidx.car.app.model.Action
 import androidx.car.app.model.ActionStrip
-import androidx.car.app.model.CarIcon
 import androidx.car.app.model.SearchTemplate
 import androidx.car.app.model.Template
 import androidx.car.app.navigation.model.NavigationTemplate
 import androidx.car.app.navigation.model.PanModeListener
 import androidx.car.app.validation.HostValidator
-import androidx.core.graphics.drawable.IconCompat
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import com.example.aamirror.KeyboardBridge
 import com.example.aamirror.MirrorEngine
-import com.example.aamirror.R
 
 class MirrorCarService : CarAppService() {
     // Chỉ để thử nghiệm. Khi phát hành thật hãy dùng danh sách host được phép.
@@ -96,26 +93,42 @@ class MirrorScreen(carContext: CarContext) : Screen(carContext) {
         })
     }
 
-    private fun icon(res: Int) =
-        CarIcon.Builder(IconCompat.createWithResource(carContext, res)).build()
-
-    private fun action(res: Int, onClick: () -> Unit) =
-        Action.Builder().setIcon(icon(res)).setOnClickListener { onClick() }.build()
+    /**
+     * NavigationTemplate bắt buộc mActionStrip != null, nhưng AndroidX ActionStrip.Builder lại
+     * cấm build strip rỗng. ActionStrip bản thân có private no-arg constructor dành cho serializer
+     * và tạo danh sách actions rỗng. Dùng constructor đó để host nhận một strip hợp lệ nhưng không
+     * có nút nào để vẽ. Toolbar thật của AA Mirror đã nằm giữa phía trên Surface.
+     *
+     * Nếu AndroidX thay đổi nội bộ ở bản tương lai, fallback vẫn tạo một action trong suốt để
+     * tránh crash; với androidx.car.app 1.4.0 nhánh chính sẽ dùng empty strip.
+     */
+    private fun emptyNavigationActionStrip(): ActionStrip {
+        return try {
+            val ctor = ActionStrip::class.java.getDeclaredConstructor()
+            ctor.isAccessible = true
+            ctor.newInstance()
+        } catch (_: Throwable) {
+            val transparent = androidx.car.app.model.CarIcon.Builder(
+                androidx.core.graphics.drawable.IconCompat.createWithResource(
+                    carContext, com.example.aamirror.R.drawable.ic_transparent
+                )
+            ).build()
+            ActionStrip.Builder()
+                .addAction(Action.Builder().setIcon(transparent).setOnClickListener { }.build())
+                .build()
+        }
+    }
 
     override fun onGetTemplate(): Template {
-        // Android Auto không cho app chọn vị trí ActionStrip. Giữ một action trong suốt
-        // chỉ để NavigationTemplate hợp lệ; bộ công cụ thật được MirrorEngine vẽ ở giữa phía trên.
-        val strip = ActionStrip.Builder()
-            .addAction(action(R.drawable.ic_transparent) { })
-            .build()
-
-        // PAN phải nằm trong mapActionStrip thì SurfaceCallback mới nhận gesture scroll.
+        // Không còn nút ActionStrip của host. Toàn bộ control (kể cả tỉ lệ) nằm trên toolbar
+        // AA Mirror tự vẽ giữa phía trên màn hình.
         val mapStrip = ActionStrip.Builder()
             .addAction(Action.PAN)
             .build()
 
         return NavigationTemplate.Builder()
-            .setActionStrip(strip)
+            .setActionStrip(emptyNavigationActionStrip())
+            // Vẫn giữ PAN để Android Auto chuyển swipe/scroll tới SurfaceCallback.
             .setMapActionStrip(mapStrip)
             .setPanModeListener(PanModeListener { })
             .build()

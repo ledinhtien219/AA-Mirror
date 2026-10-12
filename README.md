@@ -1,4 +1,4 @@
-# AA Mirror v0.3.6 — Reuse Task + Thermal Fix
+# AA Mirror v0.3.7 — Clean Host Chrome
 
 Chạy app điện thoại trên màn hình Android Auto, chia tỉ lệ 30-70 / 50-50 / 70-30, chạm được.
 Android 12 trở lên (minSdk 31). Cần **Shizuku**.
@@ -32,6 +32,9 @@ Android Auto thường ẩn app cài ngoài Store. Cài APK bằng KingInstaller
 - `car/MirrorCar.kt`: CarAppService + NavigationTemplate, nhận Surface và sự kiện chạm.
 
 ## Toolbar giữa phía trên
+- Toàn bộ control (bao gồm đổi tỉ lệ) nằm trong toolbar AA Mirror tự vẽ trên Surface.
+- Không còn nút ActionStrip template-scoped của Android Auto. Engine tạo một ActionStrip rỗng qua constructor serializer nội bộ để thỏa điều kiện của NavigationTemplate mà host không có nút nào để vẽ.
+- Map PAN vẫn được giữ vì Android Auto yêu cầu PAN trong map action strip để chuyển gesture scroll/swipe tới SurfaceCallback.
 - Hai app dùng toàn bộ `SurfaceContainer` thay vì `stableArea`, nên không còn khoảng đen lớn quanh nội dung. Các nút Android Auto được vẽ overlay phía trên như app navigation.
 - Bỏ toàn bộ viền trắng/xanh của pane; focus A/B vẫn tồn tại nội bộ để route swipe/Back/keyboard.
 - Khoảng cách giữa hai pane = 0 px.
