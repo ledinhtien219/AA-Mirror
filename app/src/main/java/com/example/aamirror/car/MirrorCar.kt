@@ -5,6 +5,7 @@ import android.graphics.Rect
 import androidx.car.app.AppManager
 import androidx.car.app.CarAppService
 import androidx.car.app.CarContext
+import androidx.car.app.CarToast
 import androidx.car.app.Screen
 import androidx.car.app.Session
 import androidx.car.app.SurfaceCallback
@@ -103,18 +104,45 @@ class MirrorScreen(carContext: CarContext) : Screen(carContext) {
     private fun action(res: Int, onClick: () -> Unit) =
         Action.Builder().setIcon(icon(res)).setOnClickListener { onClick() }.build()
 
+    private fun toast(text: String) =
+        CarToast.makeText(carContext, text, CarToast.LENGTH_SHORT).show()
+
+    private fun cycleRatio() {
+        val c = Config.load()
+        val next = when (c.mode) {
+            Mode.R30_70 -> Mode.R50_50
+            Mode.R50_50 -> Mode.R70_30
+            else -> Mode.R30_70
+        }
+        Config.save(c.copy(mode = next))
+        MirrorEngine.reconfigure()
+        toast(next.label)
+    }
+
+    private fun swap() {
+        val c = Config.load()
+        Config.save(c.copy(pkgA = c.pkgB, pkgB = c.pkgA))
+        MirrorEngine.reconfigure()
+        toast("Đổi chỗ A ⇄ B")
+    }
+
     override fun onGetTemplate(): Template {
-        // NavigationTemplate bắt buộc phải có ActionStrip không rỗng.
-        // Chỉ giữ 1 nút keyboard làm fallback để chiếm ít UI nhất có thể.
+        // Khôi phục đủ bộ công cụ người dùng cần trên xe.
         val strip = ActionStrip.Builder()
+            .addAction(action(R.drawable.ic_ratio) { cycleRatio() })
+            .addAction(action(R.drawable.ic_swap) { swap() })
+            .addAction(action(R.drawable.ic_back) { MirrorEngine.back() })
             .addAction(action(R.drawable.ic_keyboard) {
                 screenManager.push(InputScreen(carContext))
             })
             .build()
 
-        // PAN bắt buộc nếu muốn host chuyển các gesture scroll tới SurfaceCallback.
         val mapStrip = ActionStrip.Builder()
             .addAction(Action.PAN)
+            .addAction(action(R.drawable.ic_refresh) {
+                MirrorEngine.refresh()
+                toast("Tải lại")
+            })
             .build()
 
         return NavigationTemplate.Builder()

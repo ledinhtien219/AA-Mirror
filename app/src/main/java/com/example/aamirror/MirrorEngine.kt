@@ -483,10 +483,12 @@ object MirrorEngine {
                 if (lastCarTapPkg != p.pkg || age !in 0L..2500L) return@postDelayed
                 val shell = ShizukuHelper.shell ?: return@postDelayed
                 val out = try {
+                    // Chỉ đọc các dòng EditorInfo thực sự. Tuyệt đối không dùng
+                    // mCurFocusedWindow/packageName chung vì chúng tồn tại cả khi người dùng
+                    // chỉ tap vào một view bình thường và sẽ làm keyboard bật sai.
                     shell.execForOutput(
                         "dumpsys input_method | grep -E " +
-                            "'mCurAttribute|mCurrentTextBoxAttribute|mServedInputConnection|" +
-                            "mCurFocusedWindow|packageName=' | head -n 120"
+                            "'mCurAttribute=EditorInfo|mCurrentTextBoxAttribute=EditorInfo' | head -n 20"
                     )
                 } catch (_: RemoteException) {
                     ""
@@ -506,14 +508,11 @@ object MirrorEngine {
 
     private fun editorStateBelongsTo(out: String, pkg: String): Boolean {
         if (out.isBlank()) return false
-        val needles = arrayOf(
-            "packageName=$pkg",
-            "packageName: $pkg",
-            "packageName=$pkg/",
-            "package=$pkg",
-            " $pkg/"
-        )
-        return needles.any { out.contains(it, ignoreCase = false) }
+        // dumpsys phải chứa EditorInfo + đúng package. Nếu không có EditorInfo thì đây
+        // không phải text editor và không được phép mở keyboard.
+        val hasEditor = out.contains("EditorInfo")
+        val hasPkg = out.contains("packageName=$pkg") || out.contains("packageName: $pkg")
+        return hasEditor && hasPkg
     }
 
     /**
