@@ -113,9 +113,9 @@ class MainActivity : Activity() {
         }
         root.addView(btnAutoKeyboard)
         root.addView(tv(
-            "Bật dịch vụ AA Mirror trong Trợ năng để khi chạm ô tìm kiếm/ô nhập trên màn hình xe, " +
-                "bàn phím native của Android Auto tự bật. Ô mật khẩu bị bỏ qua. Nút bàn phím trên xe " +
-                "vẫn là phương án dự phòng nếu một app dùng ô nhập tuỳ biến không phát Accessibility event.", 13f
+            "Trợ năng giờ có thể dùng như chế độ điều khiển cơ bản khi không bật Shizuku: " +
+                "click node, cuộn danh sách và nhập text trên đúng VirtualDisplay. Shizuku vẫn cần " +
+                "cho raw touch/drag như kéo bản đồ, slider hoặc giao diện custom.", 13f
         ))
 
         root.addView(tv(
@@ -197,11 +197,13 @@ class MainActivity : Activity() {
         val alive = ShizukuHelper.binderAlive()
         val ok = ShizukuHelper.permitted()
         val ready = ShizukuHelper.shell != null
+        val a11y = autoKeyboardEnabled()
         status.text = when {
-            !alive -> "Shizuku chưa chạy. Mở app Shizuku và khởi động (Wireless debugging hoặc root)."
-            !ok -> "Shizuku đang chạy nhưng chưa cấp quyền cho AA Mirror. Nếu hiện \"Quyền của adb bị hạn chế\": Xiaomi/POCO bật \"Gỡ lỗi USB (Cài đặt bảo mật)\"; OPPO/OnePlus/Realme tắt \"Giám sát quyền\" trong Tuỳ chọn nhà phát triển; xong khởi động lại Shizuku."
-            !ready -> "Đang kết nối dịch vụ shell..."
-            else -> "Sẵn sàng ✔ (Shizuku + dịch vụ shell)"
+            ready -> "Sẵn sàng ✔ Chế độ đầy đủ: Shizuku + Trợ năng"
+            a11y -> "Sẵn sàng ✔ Chế độ Trợ năng: click / scroll / text. Raw drag cần Shizuku."
+            !alive -> "Chưa có quyền điều khiển. Bật Trợ năng AA Mirror để dùng chế độ cơ bản, hoặc chạy Shizuku để điều khiển đầy đủ."
+            !ok -> "Shizuku chưa cấp quyền. Bạn vẫn có thể bật Trợ năng AA Mirror để thử chế độ không Shizuku."
+            else -> "Đang kết nối Shizuku... Hoặc bật Trợ năng AA Mirror để dùng chế độ cơ bản."
         }
         btnShizuku.text = when {
             !alive -> "Mở Shizuku"

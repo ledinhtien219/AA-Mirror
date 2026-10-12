@@ -5,4 +5,5 @@
     android:accessibilityFeedbackType="feedbackGeneric"
     android:notificationTimeout="0"
     android:accessibilityFlags="flagReportViewIds|flagRetrieveInteractiveWindows|flagIncludeNotImportantViews"
-    android:canRetrieveWindowContent="true" />
+    android:canRetrieveWindowContent="true"
+    android:canPerformGestures="true" />

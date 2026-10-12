@@ -1,4 +1,4 @@
-# AA Mirror v0.3.8 — App Picker + Update Channel
+# AA Mirror v0.3.9 — Hybrid Accessibility
 
 Chạy app điện thoại trên màn hình Android Auto, chia tỉ lệ 30-70 / 50-50 / 70-30, chạm được.
 Android 12 trở lên (minSdk 31). Cần **Shizuku**.
@@ -76,6 +76,15 @@ Android Auto thường ẩn app cài ngoài Store. Cài APK bằng KingInstaller
 - **v0.3.8 là mốc signing mới**: từ v0.3.7 hoặc cũ hơn có thể phải gỡ bản cũ đúng một lần.
 - Mỗi push main tự tạo GitHub Release kèm APK.
 - App kiểm tra GitHub Releases khi mở và WorkManager kiểm tra mỗi 24 giờ; có bản mới sẽ hiện dialog/notification (Android 13+ cần quyền thông báo).
+
+## Hybrid Accessibility (0.3.9)
+- Nếu Shizuku sẵn sàng: giữ raw input đầy đủ như trước.
+- Nếu không có Shizuku nhưng AA Mirror Accessibility đang bật: launcher thử mở app lên VirtualDisplay bằng `ActivityOptions.setLaunchDisplayId()` + display context.
+- Tap được chuyển thành `AccessibilityNodeInfo.ACTION_CLICK` trên node chứa đúng tọa độ.
+- Swipe được gom theo gesture và chuyển thành action scroll trên container của đúng package/display.
+- SearchTemplate submit dùng `ACTION_SET_TEXT` và thử `ACTION_IME_ENTER`.
+- Back dùng Accessibility global Back chỉ khi package đích thực sự có window trên VirtualDisplay.
+- Giới hạn: canvas/game/custom gesture, kéo Maps, scrub video, slider và thao tác tọa độ tùy ý vẫn cần Shizuku/root. Một số ROM có thể không cho app thường launch activity của app khác lên VirtualDisplay; khi đó Accessibility-only sẽ không mở được app.
 
 ## Giới hạn đã biết
 - Build CI được tự động kiểm tra trên GitHub Actions; vẫn cần test thực tế trên head unit/ROM cụ thể, nhất là Android 16/17.

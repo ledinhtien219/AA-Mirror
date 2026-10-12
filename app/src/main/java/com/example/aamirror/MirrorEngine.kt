@@ -1,7 +1,9 @@
 package com.example.aamirror
 
+import android.app.ActivityOptions
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.Paint
@@ -100,6 +102,8 @@ object MirrorEngine {
     private var drag: Drag? = null
     private val endDrag = Runnable { finishDrag() }
     private var rawHit: Hit? = null
+    private var a11yScrollDx = 0f
+    private var a11yScrollDy = 0f
 
     private val bitmapPaint = Paint(Paint.FILTER_BITMAP_FLAG)
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; textSize = 36f }
@@ -352,21 +356,37 @@ object MirrorEngine {
     }
 
     private fun launch(p: Pane, shell: IShellService?) {
-        // Shizuku là yêu cầu bắt buộc. Không fallback Context.startActivity(): trên một số ROM
-        // launchDisplayId bị bỏ qua và app bị mở nhầm thêm một bản trên display 0.
-        shell ?: return
         val ctx = App.instance
         val intent = ctx.packageManager.getLaunchIntentForPackage(p.pkg) ?: return
         val comp = intent.component?.flattenToShortString() ?: return
 
-        // Không dùng MULTIPLE_TASK. NEW_TASK|REORDER_TO_FRONT ưu tiên reuse task/activity hiện có.
-        val ok = try {
-            shell.exec("am start --display ${p.displayId} -f 0x10020000 -n '$comp'") == 0
-        } catch (_: RemoteException) {
+        // Full mode: shell/Shizuku vẫn là đường ổn định nhất.
+        if (shell != null) {
+            val ok = try {
+                shell.exec("am start --display ${p.displayId} -f 0x10020000 -n '$comp'") == 0
+            } catch (_: RemoteException) {
+                false
+            }
+            if (!ok) Log.w(TAG, "launch " + p.pkg + " trên display " + p.displayId + " thất bại")
+            p.launched = ok
+            return
+        }
+
+        // Accessibility-only mode: thử public ActivityOptions trên VirtualDisplay do AA Mirror sở hữu.
+        // Không dùng MULTIPLE_TASK để tránh nhân bản task trên điện thoại.
+        if (!MirrorAccessibilityService.isReady()) return
+        val vd = p.vd ?: return
+        p.launched = try {
+            val opts = ActivityOptions.makeBasic().setLaunchDisplayId(p.displayId)
+            val i = Intent(intent).addFlags(
+                Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+            )
+            ctx.createDisplayContext(vd.display).startActivity(i, opts.toBundle())
+            true
+        } catch (t: Throwable) {
+            Log.w(TAG, "Accessibility mode không mở được " + p.pkg + " trên display " + p.displayId, t)
             false
         }
-        if (!ok) Log.w(TAG, "launch " + p.pkg + " trên display " + p.displayId + " thất bại")
-        p.launched = ok
     }
 
     // ---------------------------------------------------------------- vẽ
@@ -529,8 +549,11 @@ object MirrorEngine {
         lines.add("AA Mirror - bề mặt ${sw}x${sh}, vùng dùng được ${a.width()}x${a.height()}")
         if (panes.isEmpty()) lines.add("Chưa có app: mở AA Mirror trên điện thoại và chọn app A / B")
         lines.add(
-            if (ShizukuHelper.shell != null) "Shizuku: sẵn sàng"
-            else "Shizuku: CHƯA kết nối (cấp quyền trong app trên điện thoại)"
+            when {
+                ShizukuHelper.shell != null -> "Điều khiển: Shizuku (đầy đủ)"
+                MirrorAccessibilityService.isReady() -> "Điều khiển: Trợ năng (cơ bản, không raw touch)"
+                else -> "Điều khiển: CHƯA SẴN SÀNG — bật Trợ năng hoặc Shizuku"
+            }
         )
         for (p in panes.values) {
             lines.add(
@@ -620,15 +643,22 @@ object MirrorEngine {
             lastCarTapPkg = h.pane.pkg
             lastCarTapAt = t
             rememberTouch(h.pane, h.x, h.y, t)
-            inject(h.pane, MotionEvent.ACTION_DOWN, h.x, h.y, t, t)
-            handler.postDelayed({
-                inject(h.pane, MotionEvent.ACTION_UP, h.x, h.y, t, SystemClock.uptimeMillis())
-                // Không phụ thuộc hoàn toàn vào TYPE_VIEW_FOCUSED: sau mỗi tap, Accessibility
-                // chủ động dò focused editable trên đúng VirtualDisplay. Điều này cần cho
-                // YouTube/Compose/WebView, nơi event.source thường chỉ là container.
-                MirrorAccessibilityService.probeAfterCarTap(h.pane.pkg, h.pane.displayId)
-                probeImeEditorAfterTap(h.pane)
-            }, 50)
+            if (ShizukuHelper.shell != null) {
+                inject(h.pane, MotionEvent.ACTION_DOWN, h.x, h.y, t, t)
+                handler.postDelayed({
+                    inject(h.pane, MotionEvent.ACTION_UP, h.x, h.y, t, SystemClock.uptimeMillis())
+                    MirrorAccessibilityService.probeAfterCarTap(h.pane.pkg, h.pane.displayId)
+                    probeImeEditorAfterTap(h.pane)
+                }, 50)
+            } else {
+                // Accessibility mode: click đúng node chứa tọa độ thay vì inject raw MotionEvent.
+                MirrorAccessibilityService.clickAt(
+                    h.pane.pkg, h.pane.displayId, h.x, h.y
+                )
+                handler.postDelayed({
+                    MirrorAccessibilityService.probeAfterCarTap(h.pane.pkg, h.pane.displayId)
+                }, 120)
+            }
         }
     }
 
@@ -696,15 +726,24 @@ object MirrorEngine {
                 val t = SystemClock.uptimeMillis()
                 d = Drag(p, sx, sy, t)
                 drag = d
-                inject(p, MotionEvent.ACTION_DOWN, sx, sy, t, t)
+                a11yScrollDx = 0f
+                a11yScrollDy = 0f
+                if (ShizukuHelper.shell != null) {
+                    inject(p, MotionEvent.ACTION_DOWN, sx, sy, t, t)
+                }
             }
+
+            a11yScrollDx += dx
+            a11yScrollDy += dy
 
             // d.pane là owner bất biến của gesture này.
             d.x = (d.x - dx).coerceIn(0f, d.pane.rect.width() - 1f)
             d.y = (d.y - dy).coerceIn(0f, d.pane.rect.height() - 1f)
             val now = SystemClock.uptimeMillis()
             rememberTouch(d.pane, d.x, d.y, now)
-            inject(d.pane, MotionEvent.ACTION_MOVE, d.x, d.y, d.downTime, now)
+            if (ShizukuHelper.shell != null) {
+                inject(d.pane, MotionEvent.ACTION_MOVE, d.x, d.y, d.downTime, now)
+            }
             handler.removeCallbacks(endDrag)
             handler.postDelayed(endDrag, SCROLL_END_DELAY_MS)
         }
@@ -722,7 +761,16 @@ object MirrorEngine {
         drag = null
         val now = SystemClock.uptimeMillis()
         rememberTouch(d.pane, d.x, d.y, now)
-        inject(d.pane, MotionEvent.ACTION_UP, d.x, d.y, d.downTime, now)
+        if (ShizukuHelper.shell != null) {
+            inject(d.pane, MotionEvent.ACTION_UP, d.x, d.y, d.downTime, now)
+        } else {
+            val (ax, ay) = anchorFor(d.pane)
+            MirrorAccessibilityService.scrollAt(
+                d.pane.pkg, d.pane.displayId, ax, ay, a11yScrollDx, a11yScrollDy
+            )
+        }
+        a11yScrollDx = 0f
+        a11yScrollDy = 0f
     }
 
     /**
@@ -769,9 +817,15 @@ object MirrorEngine {
         handler.post {
             val p = if (targetPkg != null) panes[targetPkg] else focusPane()
             p ?: return@post
-            val shell = ShizukuHelper.shell ?: return@post
             val id = p.displayId
             if (id < 0 || text.isEmpty() && !enter) return@post
+            val shell = ShizukuHelper.shell
+            if (shell == null) {
+                MirrorAccessibilityService.setText(
+                    p.pkg, id, text, submit = enter, replace = replace
+                )
+                return@post
+            }
             try {
                 if (replace) {
                     // Android 'input' hỗ trợ keycombination và -d DISPLAY_ID.
@@ -802,8 +856,12 @@ object MirrorEngine {
 
     private fun backInternal() {
         val p = focusPane() ?: return
-        val shell = ShizukuHelper.shell ?: return
-        try { shell.injectKey(p.displayId, KeyEvent.KEYCODE_BACK) } catch (_: RemoteException) {}
+        val shell = ShizukuHelper.shell
+        if (shell != null) {
+            try { shell.injectKey(p.displayId, KeyEvent.KEYCODE_BACK) } catch (_: RemoteException) {}
+        } else {
+            MirrorAccessibilityService.back(p.pkg, p.displayId)
+        }
     }
 
     fun back() {
