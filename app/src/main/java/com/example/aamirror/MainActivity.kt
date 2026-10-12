@@ -1,0 +1,226 @@
+package com.example.aamirror
+
+import android.app.Activity
+import android.app.AlertDialog
+import android.content.ComponentName
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Bundle
+import android.provider.Settings
+import android.view.View
+import android.view.WindowInsets
+import android.widget.Button
+import android.widget.LinearLayout
+import android.widget.RadioButton
+import android.widget.RadioGroup
+import android.widget.ScrollView
+import android.widget.SeekBar
+import android.widget.TextView
+
+class MainActivity : Activity() {
+
+    private var cfg = Config.load()
+    private lateinit var status: TextView
+    private lateinit var btnShizuku: Button
+    private lateinit var btnA: Button
+    private lateinit var btnB: Button
+    private lateinit var btnAutoKeyboard: Button
+    private lateinit var dpiText: TextView
+    private val modeIds = LinkedHashMap<Int, Mode>()
+    private val listener: () -> Unit = { runOnUiThread { refreshStatus() } }
+
+    private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+
+    private fun tv(text: String, size: Float = 14f) = TextView(this).apply {
+        this.text = text
+        textSize = size
+        setPadding(0, dp(8), 0, dp(4))
+    }
+
+    private fun btn(text: String, onClick: () -> Unit) = Button(this).apply {
+        this.text = text
+        isAllCaps = false
+        setOnClickListener { onClick() }
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(16), dp(16), dp(16))
+        }
+        val scroll = ScrollView(this).apply { addView(root) }
+        scroll.setOnApplyWindowInsetsListener { v, ins ->
+            val i = ins.getInsets(WindowInsets.Type.systemBars())
+            v.setPadding(i.left, i.top, i.right, i.bottom)
+            ins
+        }
+        setContentView(scroll)
+
+        root.addView(tv("AA Mirror", 24f))
+        status = tv("")
+        root.addView(status)
+        btnShizuku = btn("Kết nối Shizuku") { onShizukuClick() }
+        root.addView(btnShizuku)
+
+        root.addView(tv("1. Chọn app", 18f))
+        btnA = btn("") { pickApp(true) }
+        btnB = btn("") { pickApp(false) }
+        root.addView(btnA)
+        root.addView(btnB)
+
+        root.addView(tv("2. Tỉ lệ hiển thị", 18f))
+        val group = RadioGroup(this)
+        for (m in Mode.values()) {
+            val rb = RadioButton(this).apply { text = m.label; id = View.generateViewId() }
+            modeIds[rb.id] = m
+            group.addView(rb)
+            if (m == cfg.mode) rb.isChecked = true
+        }
+        group.setOnCheckedChangeListener { _, id ->
+            modeIds[id]?.let { cfg = cfg.copy(mode = it); commit() }
+        }
+        root.addView(group)
+
+        root.addView(tv("3. Mật độ điểm ảnh (DPI) của app trên xe", 18f))
+        dpiText = tv("")
+        root.addView(dpiText)
+        val seek = SeekBar(this).apply {
+            max = 280                       // 120..400
+            progress = cfg.dpi - 120
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(s: SeekBar?, p: Int, fromUser: Boolean) {
+                    dpiText.text = "${p + 120} dpi (nhỏ = nhiều nội dung, lớn = chữ to)"
+                }
+                override fun onStartTrackingTouch(s: SeekBar?) {}
+                override fun onStopTrackingTouch(s: SeekBar?) {
+                    cfg = cfg.copy(dpi = (s?.progress ?: 80) + 120); commit()
+                }
+            })
+        }
+        dpiText.text = "${cfg.dpi} dpi (nhỏ = nhiều nội dung, lớn = chữ to)"
+        root.addView(seek)
+
+        root.addView(tv("4. Chạy thử", 18f))
+        root.addView(btn("Xem thử trên điện thoại (không cần xe)") {
+            startActivity(Intent(this, PreviewActivity::class.java))
+        })
+        btnAutoKeyboard = btn("") {
+            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        }
+        root.addView(btnAutoKeyboard)
+        root.addView(tv(
+            "Bật dịch vụ AA Mirror trong Trợ năng để khi chạm ô tìm kiếm/ô nhập trên màn hình xe, " +
+                "bàn phím native của Android Auto tự bật. Ô mật khẩu bị bỏ qua. Nút bàn phím trên xe " +
+                "vẫn là phương án dự phòng nếu một app dùng ô nhập tuỳ biến không phát Accessibility event.", 13f
+        ))
+
+        root.addView(tv(
+            "Trên xe: bật Developer settings của Android Auto → Unknown sources, " +
+            "rồi mở \"AA Mirror\" trong danh sách app. Thanh nút trên màn hình xe: " +
+            "đổi tỉ lệ / đổi chỗ hai app / Back / tải lại.", 13f
+        ))
+        refreshButtons()
+        refreshAutoKeyboard()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        ShizukuHelper.addListener(listener)
+        ShizukuHelper.tryBind()
+        refreshStatus()
+        refreshAutoKeyboard()
+    }
+
+    override fun onPause() {
+        ShizukuHelper.removeListener(listener)
+        super.onPause()
+    }
+
+    private fun commit() {
+        Config.save(cfg)
+        MirrorEngine.reconfigure()
+        refreshButtons()
+    }
+
+    private fun label(pkg: String): String {
+        if (pkg.isEmpty()) return "(chưa chọn)"
+        return try {
+            val pm = packageManager
+            pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
+        } catch (_: Throwable) { pkg }
+    }
+
+    private fun refreshButtons() {
+        btnA.text = "App A: ${label(cfg.pkgA)}"
+        btnB.text = "App B: ${label(cfg.pkgB)}"
+    }
+
+    private fun autoKeyboardEnabled(): Boolean {
+        val enabled = Settings.Secure.getString(
+            contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+        ) ?: return false
+        val target = ComponentName(this, MirrorAccessibilityService::class.java)
+        return enabled.split(':')
+            .mapNotNull { ComponentName.unflattenFromString(it) }
+            .any { it == target }
+    }
+
+    private fun refreshAutoKeyboard() {
+        if (!::btnAutoKeyboard.isInitialized) return
+        btnAutoKeyboard.text = if (autoKeyboardEnabled())
+            "Tự bật bàn phím khi chạm ô nhập: BẬT ✔"
+        else
+            "Tự bật bàn phím khi chạm ô nhập: TẮT — bấm để bật"
+    }
+
+    private fun refreshStatus() {
+        val alive = ShizukuHelper.binderAlive()
+        val ok = ShizukuHelper.permitted()
+        val ready = ShizukuHelper.shell != null
+        status.text = when {
+            !alive -> "Shizuku chưa chạy. Mở app Shizuku và khởi động (Wireless debugging hoặc root)."
+            !ok -> "Shizuku đang chạy nhưng chưa cấp quyền cho AA Mirror. Nếu hiện \"Quyền của adb bị hạn chế\": Xiaomi/POCO bật \"Gỡ lỗi USB (Cài đặt bảo mật)\"; OPPO/OnePlus/Realme tắt \"Giám sát quyền\" trong Tuỳ chọn nhà phát triển; xong khởi động lại Shizuku."
+            !ready -> "Đang kết nối dịch vụ shell..."
+            else -> "Sẵn sàng ✔ (Shizuku + dịch vụ shell)"
+        }
+        btnShizuku.text = when {
+            !alive -> "Mở Shizuku"
+            !ok -> "Cấp quyền Shizuku"
+            else -> "Kết nối lại dịch vụ"
+        }
+    }
+
+    private fun onShizukuClick() {
+        when {
+            !ShizukuHelper.binderAlive() -> {
+                val i = packageManager.getLaunchIntentForPackage("moe.shizuku.privileged.api")
+                if (i != null) startActivity(i)
+                else status.text = "Chưa cài Shizuku. Cài từ GitHub/Play Store (moe.shizuku.privileged.api)."
+            }
+            !ShizukuHelper.permitted() -> ShizukuHelper.requestPermission()
+            else -> ShizukuHelper.tryBind()
+        }
+        refreshStatus()
+    }
+
+    @Suppress("DEPRECATION")
+    private fun pickApp(isA: Boolean) {
+        val pm = packageManager
+        val main = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+        val apps = pm.queryIntentActivities(main, PackageManager.MATCH_ALL)
+            .map { it.activityInfo.packageName to it.loadLabel(pm).toString() }
+            .filter { it.first != packageName }
+            .distinctBy { it.first }
+            .sortedBy { it.second.lowercase() }
+        val names = (listOf("(Không chọn)") + apps.map { it.second }).toTypedArray()
+        AlertDialog.Builder(this)
+            .setTitle(if (isA) "Chọn app A (bên trái/trên)" else "Chọn app B (bên phải/dưới)")
+            .setItems(names) { _, which ->
+                val pkg = if (which == 0) "" else apps[which - 1].first
+                cfg = if (isA) cfg.copy(pkgA = pkg) else cfg.copy(pkgB = pkg)
+                commit()
+            }
+            .show()
+    }
+}

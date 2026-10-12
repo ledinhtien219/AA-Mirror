@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="accessibility_service_desc">Tự phát hiện ô nhập liệu trong app đang được AA Mirror hiển thị để mở bàn phím Android Auto. Không dùng cho ô mật khẩu.</string>
+</resources>
