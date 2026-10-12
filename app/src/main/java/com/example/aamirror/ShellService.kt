@@ -107,4 +107,13 @@ class ShellService : IShellService.Stub() {
     } catch (t: Throwable) {
         -1
     }
+
+    override fun execForOutput(command: String): String = try {
+        val p = ProcessBuilder("sh", "-c", command).redirectErrorStream(true).start()
+        val out = p.inputStream.bufferedReader().use { it.readText() }
+        p.waitFor()
+        out.take(64 * 1024)
+    } catch (t: Throwable) {
+        ""
+    }
 }

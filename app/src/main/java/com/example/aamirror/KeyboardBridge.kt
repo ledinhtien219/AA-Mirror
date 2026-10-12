@@ -35,7 +35,7 @@ object KeyboardBridge {
         val signature = "${req.pkg}|${req.displayId}|${req.initialText}"
         synchronized(this) {
             // Accessibility thường phát VIEW_CLICKED + VIEW_FOCUSED liên tiếp.
-            if (signature == lastSignature && now - lastAt < 900L) return
+            if (signature == lastSignature && now - lastAt < 2500L) return
             lastSignature = signature
             lastAt = now
         }

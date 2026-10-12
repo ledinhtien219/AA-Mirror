@@ -462,8 +462,58 @@ object MirrorEngine {
                 // chủ động dò focused editable trên đúng VirtualDisplay. Điều này cần cho
                 // YouTube/Compose/WebView, nơi event.source thường chỉ là container.
                 MirrorAccessibilityService.probeAfterCarTap(h.pane.pkg, h.pane.displayId)
+                probeImeEditorAfterTap(h.pane)
             }, 50)
         }
+    }
+
+    /**
+     * Fallback độc lập với AccessibilityService.
+     *
+     * Khi một EditText/Search box nhận focus, InputMethodManager vẫn tạo EditorInfo cho package
+     * đích ngay cả khi IME không thể vẽ lên VirtualDisplay app-owned. Shell/Shizuku đọc trạng thái
+     * này từ dumpsys input_method; nếu đúng package vừa tap, mở SearchTemplate của Android Auto.
+     * Cách này bắt được YouTube/Maps/Compose/WebView trên các ROM không expose VirtualDisplay qua
+     * AccessibilityService.
+     */
+    private fun probeImeEditorAfterTap(p: Pane) {
+        for (delay in longArrayOf(160L, 420L, 850L)) {
+            handler.postDelayed({
+                val age = SystemClock.uptimeMillis() - lastCarTapAt
+                if (lastCarTapPkg != p.pkg || age !in 0L..2500L) return@postDelayed
+                val shell = ShizukuHelper.shell ?: return@postDelayed
+                val out = try {
+                    shell.execForOutput(
+                        "dumpsys input_method | grep -E " +
+                            "'mCurAttribute|mCurrentTextBoxAttribute|mServedInputConnection|" +
+                            "mCurFocusedWindow|packageName=' | head -n 120"
+                    )
+                } catch (_: RemoteException) {
+                    ""
+                }
+                if (editorStateBelongsTo(out, p.pkg)) {
+                    KeyboardBridge.request(
+                        KeyboardBridge.Request(
+                            pkg = p.pkg,
+                            displayId = p.displayId,
+                            initialText = ""
+                        )
+                    )
+                }
+            }, delay)
+        }
+    }
+
+    private fun editorStateBelongsTo(out: String, pkg: String): Boolean {
+        if (out.isBlank()) return false
+        val needles = arrayOf(
+            "packageName=$pkg",
+            "packageName: $pkg",
+            "packageName=$pkg/",
+            "package=$pkg",
+            " $pkg/"
+        )
+        return needles.any { out.contains(it, ignoreCase = false) }
     }
 
     /**

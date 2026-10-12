@@ -11,8 +11,8 @@ android {
         applicationId = "com.example.aamirror"
         minSdk = 31          // Android 12
         targetSdk = 35
-        versionCode = 4
-        versionName = "0.3.1"
+        versionCode = 5
+        versionName = "0.3.2"
     }
     buildFeatures { aidl = true }
     compileOptions {

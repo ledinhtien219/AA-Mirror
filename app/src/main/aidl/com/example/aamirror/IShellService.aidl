@@ -7,4 +7,5 @@ interface IShellService {
     boolean injectMotion(int displayId, int action, float x, float y, long downTime, long eventTime) = 1;
     boolean injectKey(int displayId, int keyCode) = 2;
     int exec(String command) = 3;
+    String execForOutput(String command) = 4;
 }

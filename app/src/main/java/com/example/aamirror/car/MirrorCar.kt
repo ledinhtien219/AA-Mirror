@@ -5,27 +5,21 @@ import android.graphics.Rect
 import androidx.car.app.AppManager
 import androidx.car.app.CarAppService
 import androidx.car.app.CarContext
-import androidx.car.app.CarToast
 import androidx.car.app.Screen
 import androidx.car.app.Session
 import androidx.car.app.SurfaceCallback
 import androidx.car.app.SurfaceContainer
 import androidx.car.app.model.Action
-import androidx.car.app.model.ActionStrip
-import androidx.car.app.model.CarIcon
 import androidx.car.app.model.SearchTemplate
 import androidx.car.app.model.Template
 import androidx.car.app.navigation.model.NavigationTemplate
-import androidx.car.app.navigation.model.PanModeListener
 import androidx.car.app.validation.HostValidator
-import androidx.core.graphics.drawable.IconCompat
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import com.example.aamirror.Config
 import com.example.aamirror.KeyboardBridge
 import com.example.aamirror.MirrorEngine
 import com.example.aamirror.Mode
-import com.example.aamirror.R
 
 class MirrorCarService : CarAppService() {
     // Chỉ để thử nghiệm. Khi phát hành thật hãy dùng danh sách host được phép.
@@ -98,50 +92,12 @@ class MirrorScreen(carContext: CarContext) : Screen(carContext) {
         })
     }
 
-    private fun icon(res: Int) =
-        CarIcon.Builder(IconCompat.createWithResource(carContext, res)).build()
-
-    private fun action(res: Int, onClick: () -> Unit) =
-        Action.Builder().setIcon(icon(res)).setOnClickListener { onClick() }.build()
-
-    private fun toast(text: String) =
-        CarToast.makeText(carContext, text, CarToast.LENGTH_SHORT).show()
-
-    private fun cycleRatio() {
-        val c = Config.load()
-        val next = when (c.mode) {
-            Mode.R30_70 -> Mode.R50_50
-            Mode.R50_50 -> Mode.R70_30
-            else -> Mode.R30_70
-        }
-        Config.save(c.copy(mode = next))
-        MirrorEngine.reconfigure()
-        toast(next.label)
-    }
-
-    private fun swap() {
-        val c = Config.load()
-        Config.save(c.copy(pkgA = c.pkgB, pkgB = c.pkgA))
-        MirrorEngine.reconfigure()
-        toast("Đổi chỗ A ⇄ B")
-    }
-
     override fun onGetTemplate(): Template {
-        val strip = ActionStrip.Builder()
-            .addAction(action(R.drawable.ic_ratio) { cycleRatio() })
-            .addAction(action(R.drawable.ic_swap) { swap() })
-            .addAction(action(R.drawable.ic_back) { MirrorEngine.back() })
-            .addAction(action(R.drawable.ic_keyboard) { screenManager.push(InputScreen(carContext)) })
-            .build()
-        val mapStrip = ActionStrip.Builder()
-            .addAction(Action.PAN)
-            .addAction(action(R.drawable.ic_refresh) { MirrorEngine.refresh(); toast("Tải lại") })
-            .build()
-        return NavigationTemplate.Builder()
-            .setActionStrip(strip)
-            .setMapActionStrip(mapStrip)
-            .setPanModeListener(PanModeListener { })
-            .build()
+        // Immersive map surface: không đặt ActionStrip/MapActionStrip.
+        // Trên DHU/Android Auto, các strip này làm host thu nhỏ vùng Surface và tạo
+        // khoảng đen lớn phía trên/phải. Tỉ lệ/app/DPI chỉnh từ điện thoại; Back và
+        // keyboard được route tự động trong engine.
+        return NavigationTemplate.Builder().build()
     }
 }
 
