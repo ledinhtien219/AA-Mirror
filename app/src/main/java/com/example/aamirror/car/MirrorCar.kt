@@ -10,16 +10,21 @@ import androidx.car.app.Session
 import androidx.car.app.SurfaceCallback
 import androidx.car.app.SurfaceContainer
 import androidx.car.app.model.Action
+import androidx.car.app.model.ActionStrip
+import androidx.car.app.model.CarIcon
 import androidx.car.app.model.SearchTemplate
 import androidx.car.app.model.Template
 import androidx.car.app.navigation.model.NavigationTemplate
+import androidx.car.app.navigation.model.PanModeListener
 import androidx.car.app.validation.HostValidator
+import androidx.core.graphics.drawable.IconCompat
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import com.example.aamirror.Config
 import com.example.aamirror.KeyboardBridge
 import com.example.aamirror.MirrorEngine
 import com.example.aamirror.Mode
+import com.example.aamirror.R
 
 class MirrorCarService : CarAppService() {
     // Chỉ để thử nghiệm. Khi phát hành thật hãy dùng danh sách host được phép.
@@ -92,12 +97,31 @@ class MirrorScreen(carContext: CarContext) : Screen(carContext) {
         })
     }
 
+    private fun icon(res: Int) =
+        CarIcon.Builder(IconCompat.createWithResource(carContext, res)).build()
+
+    private fun action(res: Int, onClick: () -> Unit) =
+        Action.Builder().setIcon(icon(res)).setOnClickListener { onClick() }.build()
+
     override fun onGetTemplate(): Template {
-        // Immersive map surface: không đặt ActionStrip/MapActionStrip.
-        // Trên DHU/Android Auto, các strip này làm host thu nhỏ vùng Surface và tạo
-        // khoảng đen lớn phía trên/phải. Tỉ lệ/app/DPI chỉnh từ điện thoại; Back và
-        // keyboard được route tự động trong engine.
-        return NavigationTemplate.Builder().build()
+        // NavigationTemplate bắt buộc phải có ActionStrip không rỗng.
+        // Chỉ giữ 1 nút keyboard làm fallback để chiếm ít UI nhất có thể.
+        val strip = ActionStrip.Builder()
+            .addAction(action(R.drawable.ic_keyboard) {
+                screenManager.push(InputScreen(carContext))
+            })
+            .build()
+
+        // PAN bắt buộc nếu muốn host chuyển các gesture scroll tới SurfaceCallback.
+        val mapStrip = ActionStrip.Builder()
+            .addAction(Action.PAN)
+            .build()
+
+        return NavigationTemplate.Builder()
+            .setActionStrip(strip)
+            .setMapActionStrip(mapStrip)
+            .setPanModeListener(PanModeListener { })
+            .build()
     }
 }
 
