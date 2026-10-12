@@ -11,8 +11,8 @@ android {
         applicationId = "com.example.aamirror"
         minSdk = 31          // Android 12
         targetSdk = 35
-        versionCode = 10
-        versionName = "0.3.7"
+        versionCode = 11
+        versionName = "0.3.8"
     }
     buildFeatures { aidl = true }
     compileOptions {
@@ -29,4 +29,5 @@ dependencies {
     implementation("dev.rikka.shizuku:api:13.1.5")
     implementation("dev.rikka.shizuku:provider:13.1.5")
     implementation("org.lsposed.hiddenapibypass:hiddenapibypass:4.3")
+    implementation("androidx.work:work-runtime-ktx:2.9.1")
 }

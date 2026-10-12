@@ -1,4 +1,4 @@
-# AA Mirror v0.3.7 — Clean Host Chrome
+# AA Mirror v0.3.8 — App Picker + Update Channel
 
 Chạy app điện thoại trên màn hình Android Auto, chia tỉ lệ 30-70 / 50-50 / 70-30, chạm được.
 Android 12 trở lên (minSdk 31). Cần **Shizuku**.
@@ -30,6 +30,11 @@ Android Auto thường ẩn app cài ngoài Store. Cài APK bằng KingInstaller
 - `MirrorEngine`: mỗi app = 1 VirtualDisplay (public + own-content-only) ghi vào ImageReader (HardwareBuffer); ghép lên Surface đích theo tỉ lệ.
 - `ShellService` (quyền shell qua Shizuku): `am start --display N` để mở app lên display, `IInputManager.injectInputEvent` + `setDisplayId` để bơm cảm ứng/phím (dự phòng: `input -d N`).
 - `car/MirrorCar.kt`: CarAppService + NavigationTemplate, nhận Surface và sự kiện chạm.
+
+## Chọn app ngay trên Android Auto (0.3.8)
+- Toolbar có thêm nút **Apps** (biểu tượng 4 ô).
+- Chọn App A hoặc App B ngay trên màn hình xe.
+- Danh sách app dùng SearchTemplate, hỗ trợ tìm theo tên/package và không tự bật bàn phím khi vừa mở.
 
 ## Toolbar giữa phía trên
 - Toàn bộ control (bao gồm đổi tỉ lệ) nằm trong toolbar AA Mirror tự vẽ trên Surface.
@@ -64,6 +69,13 @@ Android Auto thường ẩn app cài ngoài Store. Cài APK bằng KingInstaller
 - Khi Android Auto kết nối lại, VirtualDisplay cũ được resume nên không cần tạo thêm bản app.
 - Nút Refresh là soft refresh, không phá display.
 - Hai nguồn frame được coalesce về tối đa khoảng **30 fps tổng**, giảm copy HardwareBuffer/GPU load và nhiệt.
+
+## Icon + cập nhật (0.3.8)
+- Có launcher/adaptive icon riêng cho AA Mirror.
+- Main build từ v0.3.8 dùng signing key được giữ trong GitHub Actions cache để các bản sau có thể cài đè.
+- **v0.3.8 là mốc signing mới**: từ v0.3.7 hoặc cũ hơn có thể phải gỡ bản cũ đúng một lần.
+- Mỗi push main tự tạo GitHub Release kèm APK.
+- App kiểm tra GitHub Releases khi mở và WorkManager kiểm tra mỗi 24 giờ; có bản mới sẽ hiện dialog/notification (Android 13+ cần quyền thông báo).
 
 ## Giới hạn đã biết
 - Build CI được tự động kiểm tra trên GitHub Actions; vẫn cần test thực tế trên head unit/ROM cụ thể, nhất là Android 16/17.

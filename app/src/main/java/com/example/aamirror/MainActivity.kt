@@ -1,10 +1,12 @@
 package com.example.aamirror
 
+import android.Manifest
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.view.View
@@ -28,6 +30,7 @@ class MainActivity : Activity() {
     private lateinit var dpiText: TextView
     private val modeIds = LinkedHashMap<Int, Mode>()
     private val listener: () -> Unit = { runOnUiThread { refreshStatus() } }
+    private var updateChecked = false
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
@@ -117,9 +120,21 @@ class MainActivity : Activity() {
 
         root.addView(tv(
             "Trên xe: bật Developer settings của Android Auto → Unknown sources, " +
-            "rồi mở \"AA Mirror\" trong danh sách app. Thanh nút trên màn hình xe: " +
-            "đổi tỉ lệ / đổi chỗ hai app / Back / tải lại.", 13f
+            "rồi mở \"AA Mirror\" trong danh sách app. Toolbar giữa phía trên có: " +
+            "chọn app / đổi tỉ lệ / đổi chỗ / Back / bàn phím / tải lại.", 13f
         ))
+
+        root.addView(tv("5. Cập nhật", 18f))
+        root.addView(btn("Kiểm tra bản mới") {
+            UpdateChecker.checkInApp(this, force = true)
+        })
+
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 2001)
+        }
+
         refreshButtons()
         refreshAutoKeyboard()
     }
@@ -130,6 +145,10 @@ class MainActivity : Activity() {
         ShizukuHelper.tryBind()
         refreshStatus()
         refreshAutoKeyboard()
+        if (!updateChecked) {
+            updateChecked = true
+            UpdateChecker.checkInApp(this, force = false)
+        }
     }
 
     override fun onPause() {

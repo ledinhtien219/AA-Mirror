@@ -73,7 +73,7 @@ object MirrorEngine {
     private class Hit(val pane: Pane, val x: Float, val y: Float)
     private class Drag(val pane: Pane, var x: Float, var y: Float, val downTime: Long)
 
-    private enum class Tool { RATIO, SWAP, BACK, KEYBOARD, REFRESH }
+    private enum class Tool { APPS, RATIO, SWAP, BACK, KEYBOARD, REFRESH }
     private data class ToolButton(val tool: Tool, val rect: RectF, val iconRes: Int)
 
     private val thread = HandlerThread("aamirror-engine").apply { start() }
@@ -431,6 +431,7 @@ object MirrorEngine {
         val size = (sh * 0.095f).coerceIn(48f, 70f)
         val gap = (size * 0.14f).coerceIn(7f, 10f)
         val tools = arrayOf(
+            Tool.APPS to R.drawable.ic_apps,
             Tool.RATIO to R.drawable.ic_ratio,
             Tool.SWAP to R.drawable.ic_swap,
             Tool.BACK to R.drawable.ic_back,
@@ -481,6 +482,7 @@ object MirrorEngine {
     private fun handleToolbarClick(x: Float, y: Float): Boolean {
         val b = toolbarButtons().firstOrNull { it.rect.contains(x, y) } ?: return false
         when (b.tool) {
+            Tool.APPS -> CarUiBridge.openAppPicker()
             Tool.RATIO -> {
                 val c = Config.load()
                 val next = when (c.mode) {
