@@ -12,7 +12,9 @@ object KeyboardBridge {
     data class Request(
         val pkg: String,
         val displayId: Int,
-        val initialText: String
+        val initialText: String,
+        val replaceExisting: Boolean = true,
+        val force: Boolean = false
     )
 
     private val main = Handler(Looper.getMainLooper())
@@ -32,10 +34,11 @@ object KeyboardBridge {
 
     fun request(req: Request) {
         val now = SystemClock.uptimeMillis()
-        val signature = "${req.pkg}|${req.displayId}|${req.initialText}"
+        val signature = "${req.pkg}|${req.displayId}|${req.initialText}|${req.replaceExisting}"
         synchronized(this) {
             // Accessibility thường phát VIEW_CLICKED + VIEW_FOCUSED liên tiếp.
-            if (signature == lastSignature && now - lastAt < 2500L) return
+            // Nút keyboard thủ công dùng force=true để luôn mở được.
+            if (!req.force && signature == lastSignature && now - lastAt < 2500L) return
             lastSignature = signature
             lastAt = now
         }

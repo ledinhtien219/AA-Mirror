@@ -9,6 +9,7 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.graphics.Rect
+import android.graphics.RectF
 import android.hardware.HardwareBuffer
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
@@ -72,12 +73,16 @@ object MirrorEngine {
     private class Hit(val pane: Pane, val x: Float, val y: Float)
     private class Drag(val pane: Pane, var x: Float, var y: Float, val downTime: Long)
 
+    private enum class Tool { RATIO, SWAP, BACK, KEYBOARD, REFRESH }
+    private data class ToolButton(val tool: Tool, val rect: RectF, val iconRes: Int)
+
     private val thread = HandlerThread("aamirror-engine").apply { start() }
     private val handler = Handler(thread.looper)
 
     private var surface: Surface? = null
     private var sw = 0
     private var sh = 0
+    private var showToolbarOnSurface = false
     private val panes = LinkedHashMap<String, Pane>()
     private var area: Rect? = null   // vùng nhìn thấy được (không bị thanh nút/launcher của xe che)
 
@@ -95,12 +100,23 @@ object MirrorEngine {
 
     private val bitmapPaint = Paint(Paint.FILTER_BITMAP_FLAG)
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; textSize = 36f }
+    private val toolbarBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.argb(190, 18, 18, 18)
+        style = Paint.Style.FILL
+    }
+    private val toolbarButtonPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.argb(215, 54, 54, 54)
+        style = Paint.Style.FILL
+    }
 
     // ---------------------------------------------------------------- vòng đời
 
-    fun attach(s: Surface, w: Int, h: Int) {
+    fun attach(s: Surface, w: Int, h: Int, showToolbar: Boolean = false) {
         handler.post {
-            surface = s; sw = w; sh = h
+            surface = s
+            sw = w
+            sh = h
+            showToolbarOnSurface = showToolbar
             rebuild()
         }
     }
@@ -355,9 +371,105 @@ object MirrorEngine {
                 if (bb != null) c.drawBitmap(bb, null, p.rect, bitmapPaint)
             }
             if (panes.values.none { it.bitmap != null }) drawStatus(c)
+            if (showToolbarOnSurface) drawToolbar(c)
         } finally {
             try { s.unlockCanvasAndPost(c) } catch (_: Throwable) {}
         }
+    }
+
+    private fun toolbarButtons(): List<ToolButton> {
+        if (!showToolbarOnSurface || sw <= 0 || sh <= 0) return emptyList()
+
+        val size = (sh * 0.095f).coerceIn(48f, 70f)
+        val gap = (size * 0.14f).coerceIn(7f, 10f)
+        val tools = arrayOf(
+            Tool.RATIO to R.drawable.ic_ratio,
+            Tool.SWAP to R.drawable.ic_swap,
+            Tool.BACK to R.drawable.ic_back,
+            Tool.KEYBOARD to R.drawable.ic_keyboard,
+            Tool.REFRESH to R.drawable.ic_refresh
+        )
+        val total = tools.size * size + (tools.size - 1) * gap
+        var x = (sw - total) / 2f
+        val top = (sh * 0.018f).coerceIn(8f, 16f)
+
+        return tools.map { (tool, icon) ->
+            ToolButton(tool, RectF(x, top, x + size, top + size), icon).also {
+                x += size + gap
+            }
+        }
+    }
+
+    /**
+     * Toolbar riêng của AA Mirror được vẽ trực tiếp lên Surface, nên có thể đặt chính giữa
+     * phía trên thay vì phụ thuộc vị trí ActionStrip do Android Auto host quyết định.
+     */
+    private fun drawToolbar(c: android.graphics.Canvas) {
+        val buttons = toolbarButtons()
+        if (buttons.isEmpty()) return
+
+        val first = buttons.first().rect
+        val last = buttons.last().rect
+        val pad = (first.height() * 0.14f).coerceAtLeast(7f)
+        val bg = RectF(first.left - pad, first.top - pad, last.right + pad, last.bottom + pad)
+        c.drawRoundRect(bg, bg.height() / 2f, bg.height() / 2f, toolbarBgPaint)
+
+        for (b in buttons) {
+            val r = b.rect
+            c.drawOval(r, toolbarButtonPaint)
+
+            val inset = (r.width() * 0.27f).toInt()
+            val d = App.instance.getDrawable(b.iconRes) ?: continue
+            d.setBounds(
+                r.left.toInt() + inset,
+                r.top.toInt() + inset,
+                r.right.toInt() - inset,
+                r.bottom.toInt() - inset
+            )
+            d.draw(c)
+        }
+    }
+
+    private fun handleToolbarClick(x: Float, y: Float): Boolean {
+        val b = toolbarButtons().firstOrNull { it.rect.contains(x, y) } ?: return false
+        when (b.tool) {
+            Tool.RATIO -> {
+                val c = Config.load()
+                val next = when (c.mode) {
+                    Mode.R30_70 -> Mode.R50_50
+                    Mode.R50_50 -> Mode.R70_30
+                    else -> Mode.R30_70
+                }
+                Config.save(c.copy(mode = next))
+                rebuild()
+            }
+            Tool.SWAP -> {
+                val c = Config.load()
+                Config.save(c.copy(pkgA = c.pkgB, pkgB = c.pkgA))
+                rebuild()
+            }
+            Tool.BACK -> backInternal()
+            Tool.KEYBOARD -> {
+                val p = focusPane()
+                if (p != null && p.displayId >= 0) {
+                    KeyboardBridge.request(
+                        KeyboardBridge.Request(
+                            pkg = p.pkg,
+                            displayId = p.displayId,
+                            initialText = "",
+                            replaceExisting = false,
+                            force = true
+                        )
+                    )
+                }
+            }
+            Tool.REFRESH -> {
+                releaseAll()
+                rebuild()
+            }
+        }
+        drawFrame()
+        return true
     }
 
     /** Khi chưa có hình, hiện trạng thái ngay trên màn hình xe để biết đang kẹt ở đâu. */
@@ -448,6 +560,9 @@ object MirrorEngine {
         handler.post {
             handler.removeCallbacks(endDrag)
             finishDrag()
+
+            // Toolbar nằm trên Surface nên phải consume trước khi route tap xuống app.
+            if (handleToolbarClick(x, y)) return@post
 
             val h = hit(x, y) ?: return@post
             setFocus(h.pane)
@@ -635,11 +750,13 @@ object MirrorEngine {
         }
     }
 
+    private fun backInternal() {
+        val p = focusPane() ?: return
+        val shell = ShizukuHelper.shell ?: return
+        try { shell.injectKey(p.displayId, KeyEvent.KEYCODE_BACK) } catch (_: RemoteException) {}
+    }
+
     fun back() {
-        handler.post {
-            val p = focusPane() ?: return@post
-            val shell = ShizukuHelper.shell ?: return@post
-            try { shell.injectKey(p.displayId, KeyEvent.KEYCODE_BACK) } catch (_: RemoteException) {}
-        }
+        handler.post { backInternal() }
     }
 }

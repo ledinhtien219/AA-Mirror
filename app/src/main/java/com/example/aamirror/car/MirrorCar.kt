@@ -5,7 +5,6 @@ import android.graphics.Rect
 import androidx.car.app.AppManager
 import androidx.car.app.CarAppService
 import androidx.car.app.CarContext
-import androidx.car.app.CarToast
 import androidx.car.app.Screen
 import androidx.car.app.Session
 import androidx.car.app.SurfaceCallback
@@ -21,10 +20,8 @@ import androidx.car.app.validation.HostValidator
 import androidx.core.graphics.drawable.IconCompat
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
-import com.example.aamirror.Config
 import com.example.aamirror.KeyboardBridge
 import com.example.aamirror.MirrorEngine
-import com.example.aamirror.Mode
 import com.example.aamirror.R
 
 class MirrorCarService : CarAppService() {
@@ -49,7 +46,7 @@ class MirrorScreen(carContext: CarContext) : Screen(carContext) {
                 carContext = carContext,
                 targetPkg = req.pkg,
                 initialText = req.initialText,
-                replaceExisting = true
+                replaceExisting = req.replaceExisting
             )
         )
     }
@@ -58,7 +55,7 @@ class MirrorScreen(carContext: CarContext) : Screen(carContext) {
         override fun onSurfaceAvailable(container: SurfaceContainer) {
             val s = container.surface ?: return
             currentSurface = s
-            MirrorEngine.attach(s, container.width, container.height)
+            MirrorEngine.attach(s, container.width, container.height, showToolbar = true)
         }
 
         override fun onVisibleAreaChanged(visibleArea: Rect) {}
@@ -104,45 +101,16 @@ class MirrorScreen(carContext: CarContext) : Screen(carContext) {
     private fun action(res: Int, onClick: () -> Unit) =
         Action.Builder().setIcon(icon(res)).setOnClickListener { onClick() }.build()
 
-    private fun toast(text: String) =
-        CarToast.makeText(carContext, text, CarToast.LENGTH_SHORT).show()
-
-    private fun cycleRatio() {
-        val c = Config.load()
-        val next = when (c.mode) {
-            Mode.R30_70 -> Mode.R50_50
-            Mode.R50_50 -> Mode.R70_30
-            else -> Mode.R30_70
-        }
-        Config.save(c.copy(mode = next))
-        MirrorEngine.reconfigure()
-        toast(next.label)
-    }
-
-    private fun swap() {
-        val c = Config.load()
-        Config.save(c.copy(pkgA = c.pkgB, pkgB = c.pkgA))
-        MirrorEngine.reconfigure()
-        toast("Đổi chỗ A ⇄ B")
-    }
-
     override fun onGetTemplate(): Template {
-        // Khôi phục đủ bộ công cụ người dùng cần trên xe.
+        // Android Auto không cho app chọn vị trí ActionStrip. Giữ một action trong suốt
+        // chỉ để NavigationTemplate hợp lệ; bộ công cụ thật được MirrorEngine vẽ ở giữa phía trên.
         val strip = ActionStrip.Builder()
-            .addAction(action(R.drawable.ic_ratio) { cycleRatio() })
-            .addAction(action(R.drawable.ic_swap) { swap() })
-            .addAction(action(R.drawable.ic_back) { MirrorEngine.back() })
-            .addAction(action(R.drawable.ic_keyboard) {
-                screenManager.push(InputScreen(carContext))
-            })
+            .addAction(action(R.drawable.ic_transparent) { })
             .build()
 
+        // PAN phải nằm trong mapActionStrip thì SurfaceCallback mới nhận gesture scroll.
         val mapStrip = ActionStrip.Builder()
             .addAction(Action.PAN)
-            .addAction(action(R.drawable.ic_refresh) {
-                MirrorEngine.refresh()
-                toast("Tải lại")
-            })
             .build()
 
         return NavigationTemplate.Builder()
