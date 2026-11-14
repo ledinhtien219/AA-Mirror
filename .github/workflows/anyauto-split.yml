@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -77,3 +77,21 @@ jobs:
             anyauto-split/work/AnyAuto-main/build-verification.log
           if-no-files-found: error
           retention-days: 30
+
+      - name: Publish APK for direct download
+        if: success()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p anyauto-split/download
+          cp anyauto-split/work/AnyAuto-main/AnyAuto-Split.apk anyauto-split/download/AnyAuto-Split.apk
+          cp anyauto-split/work/AnyAuto-main/apk-sha256.txt anyauto-split/download/apk-sha256.txt
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add anyauto-split/download/AnyAuto-Split.apk anyauto-split/download/apk-sha256.txt
+          if git diff --cached --quiet; then
+            echo 'APK unchanged'
+            exit 0
+          fi
+          git commit -m 'Publish AnyAuto-Split APK [skip ci]'
+          git push origin HEAD:anyauto-split-build
