@@ -40,12 +40,17 @@ jobs:
           distribution: temurin
           java-version: '21'
 
+      - name: Set up Android SDK command-line tools
+        uses: android-actions/setup-android@v4
+        with:
+          packages: ''
+
       - name: Install SDK Platform and Build Tools 35
         shell: bash
         run: |
           set -e
           echo "ANDROID_HOME=$ANDROID_HOME"
-          test -x "$ANDROID_HOME/cmdline-tools/16.0/bin/sdkmanager" || command -v sdkmanager
+          command -v sdkmanager
           sdkmanager --install "platforms;android-35" "build-tools;35.0.0"
           test -f "$ANDROID_HOME/platforms/android-35/android.jar"
           test -x "$ANDROID_HOME/build-tools/35.0.0/aapt2"
