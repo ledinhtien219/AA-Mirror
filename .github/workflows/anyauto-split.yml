@@ -1,0 +1,72 @@
+name: Build AnyAuto Split APK
+
+on:
+  push:
+    branches: [anyauto-split-build]
+    paths:
+      - 'anyauto-split/AnyAuto-Split-Build-Ready.zip'
+      - '.github/workflows/anyauto-split.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Verify source archive is present
+        shell: bash
+        run: |
+          test -f anyauto-split/AnyAuto-Split-Build-Ready.zip || {
+            echo "::error::Source ZIP missing. Upload AnyAuto-Split-Build-Ready.zip to anyauto-split/ in this branch."
+            exit 1
+          }
+          echo "e5d025418a34572932753128c2c8de25150596874a72ee198f3c96c6a650c19e  anyauto-split/AnyAuto-Split-Build-Ready.zip" | sha256sum -c -
+
+      - name: Extract AnyAuto source
+        run: |
+          mkdir -p anyauto-split/work
+          unzip -q anyauto-split/AnyAuto-Split-Build-Ready.zip -d anyauto-split/work
+          test -f anyauto-split/work/AnyAuto-main/build.sh
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK Platform and Build Tools 35
+        run: |
+          sdkmanager --install "platforms;android-35" "build-tools;35.0.0"
+          test -x "$ANDROID_HOME/build-tools/35.0.0/aapt2"
+
+      - name: Build and verify APK
+        working-directory: anyauto-split/work/AnyAuto-main
+        shell: bash
+        run: |
+          set -o pipefail
+          chmod +x build.sh
+          ./build.sh verify 2>&1 | tee build-verification.log
+          test -s anyauto.apk
+          cp anyauto.apk AnyAuto-Split.apk
+          sha256sum AnyAuto-Split.apk > apk-sha256.txt
+
+      - name: Upload APK artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: AnyAuto-Split-APK
+          path: |
+            anyauto-split/work/AnyAuto-main/AnyAuto-Split.apk
+            anyauto-split/work/AnyAuto-main/apk-sha256.txt
+            anyauto-split/work/AnyAuto-main/build-verification.log
+          if-no-files-found: error
+          retention-days: 30
